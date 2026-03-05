@@ -7,8 +7,8 @@ workspace = "."
 paths = [
   "."
 ]
-includes = ["vendor"]
-excludes = []
+includes = [""]
+excludes = ["vendor"]
 
 [formatter]
 preset = "pint"
