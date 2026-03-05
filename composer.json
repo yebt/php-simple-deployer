@@ -1,0 +1,8 @@
+{
+    "scripts": {
+        "mango": "vendor/bin/mago"
+    },
+    "require-dev": {
+        "carthage-software/mago": "^1.13.3"
+    }
+}
