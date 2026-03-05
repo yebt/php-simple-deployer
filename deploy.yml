@@ -1,0 +1,21 @@
+- name: Maintenance Mode ON
+  run: php -v|| true
+
+#
+# - name: Pulling Latest Code
+#   run: git pull origin main
+#
+# - name: Installing PHP Dependencies
+#   run: composer install --no-dev --optimize-autoloader --no-interaction
+#
+# - name: Running Migrations
+#   run: php artisan migrate --force
+#
+# - name: Clearing Cache
+#   run: php artisan config:cache && php artisan route:cache
+#
+# - name: Compiling Assets
+#   run: npm install && npm run build
+#
+# - name: Maintenance Mode OFF
+#   run: php artisan up

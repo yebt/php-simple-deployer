@@ -1,0 +1,277 @@
+<?php
+/**
+ * PHP-Simple-Deployer - Simple Deployer
+ * Tailwind CSS 4 + PHP 8.x
+ */
+
+
+// 1. Load .env (Simple parser)
+if (file_exists(__DIR__ . '/.env')) {
+    $lines = file(__DIR__ . '/.env', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    foreach ($lines as $line) {
+        if (strpos(trim($line), '#') === 0) continue;
+        list($name, $value) = explode('=', $line, 2);
+        $_ENV[trim($name)] = trim($value);
+    }
+}
+
+$devmode = $_ENV['DEV_MODE'] ?? false;
+
+if (!$devmode){
+    ini_set('display_errors', 0); // No mostrar errores en pantalla (evita romper headers)
+    ini_set('display_startup_errors', 0);
+    error_reporting(E_ALL); // Pero sí capturarlos todos en el log del sistema
+}
+
+// Configuration Helpers
+$config = [
+    'project_path' => $_ENV['PROJECT_PATH'] ?? '',
+    'instructions' => $_ENV['INSTRUCTIONS_FILE'] ?? 'deploy.yml',
+    'logs_path'    => $_ENV['LOGS_PATH'] ?? './logs',
+    'bot_token'    => $_ENV['TELEGRAM_BOT_TOKEN'] ?? '',
+    'chat_id'      => $_ENV['TELEGRAM_CHAT_ID'] ?? '',
+    'thread_id'    => $_ENV['TELEGRAM_THREAD_ID'] ?? null,
+    'secure_token' => $_ENV['SECURITY_TOKEN'] ?? '',
+    'webhook_method' => $_ENV['WEBHOOK_METHOD'] ?? 'POST',
+];
+
+// 2. Simple Router
+$uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$method = $_SERVER['REQUEST_METHOD'];
+
+// Helper to check variables
+function getStatus() {
+    global $config;
+    $status = [];
+    foreach ($config as $key => $val) {
+        if ($key === 'thread_id') continue; // Optional
+        $status[$key] = !empty($val);
+    }
+    return $status;
+}
+
+// --- CONTROLLERS ---
+
+if ($uri === '/' || $uri === '/health') {
+    if (str_contains($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json')) {
+        header('Content-Type: application/json');
+        echo json_encode(['status' => 'ok', 'vars' => getStatus()]);
+        exit;
+    }
+    renderHealthView();
+} 
+
+elseif ($uri === '/webhook/deploy') {
+    validateSecurity();
+    if ($method !== $config['webhook_method']) {
+        http_response_code(405);
+        exit('Method Not Allowed');
+    }
+    executeDeployment();
+}
+
+elseif ($uri === '/log/last') {
+    showLastLog();
+}
+
+elseif ($uri === '/test-notify') {
+    // $res = sendTelegram("PHP-Simple-Deployer Deployer: Test Notification 🚀");
+    $res = sendTelegram(
+        <<<MARKDOWN
+__PHP-SD__
+--- Test Notification ---
+MARKDOWN
+    );
+    header('Location: /health?notified=' . ($res ? '1' : '0'));
+}
+
+// --- LOGIC FUNCTIONS ---
+
+function validateSecurity() {
+    global $config;
+    if (empty($config['secure_token'])) return;
+    $headers = getallheaders();
+    $token = $headers['X-Deploy-Token'] ?? $_GET['token'] ?? '';
+    if ($token !== $config['secure_token']) {
+        http_response_code(401);
+        exit('Unauthorized');
+    }
+}
+
+function executeDeployment() {
+    global $config;
+    $startTime = microtime(true);
+    $logContent = "--- DEPLOYMENT START: " . date('Y-m-d H:i:s') . " ---\n";
+    
+    if (!is_dir($config['logs_path'])) mkdir($config['logs_path'], 0777, true);
+    $logFile = $config['logs_path'] . '/deploy_' . date('Ymd_His') . '.log';
+    
+    // Parse YAML (Regex)
+    if (!file_exists($config['instructions'])) {
+        file_put_contents($logFile, "Error: Instructions file not found.");
+        exit('No instructions');
+    }
+
+    $yaml = file_get_contents($config['instructions']);
+    preg_match_all('/-\s*name:\s*(.+)\n\s+run:\s*(.+)/', $yaml, $matches, PREG_SET_ORDER);
+    
+    chdir($config['project_path']);
+    $success = true;
+    $failedTask = "";
+
+    foreach ($matches as $task) {
+        $name = trim($task[1]);
+        $cmd = trim($task[2]);
+        
+        $logContent .= "\n[TASK]: $name\n[CMD]: $cmd\n";
+        
+        $process = proc_open($cmd, [
+            1 => ["pipe", "w"], // stdout
+            2 => ["pipe", "w"]  // stderr
+        ], $pipes);
+
+        $stdout = stream_get_contents($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $exitCode = proc_close($process);
+
+        $logContent .= "--- STDOUT ---\n$stdout";
+        if ($stderr) $logContent .= "--- STDERR ---\n$stderr";
+        $logContent .= "EXIT CODE: $exitCode\n";
+
+        if ($exitCode !== 0) {
+            $success = false;
+            $failedTask = $name;
+            break;
+        }
+    }
+
+    $duration = round(microtime(true) - $startTime, 2);
+    $logContent .= "\n--- DEPLOYMENT END: " . date('Y-m-d H:i:s') . " (Duration: {$duration}s) ---\n";
+    file_put_contents($logFile, $logContent);
+
+    // Notify Telegram
+    $protocol = isset($_SERVER['HTTPS']) ? 'https://' : 'http://';
+    $logUrl = $protocol . $_SERVER['HTTP_HOST'] . "/log/last";
+    $statusMsg = $success ? "✅ *Success*" : "❌ *Failed* at: `$failedTask`";
+    
+    $msg = "🚀 *Deployment Report*\n\n";
+    $msg .= "Status: $statusMsg\n";
+    $msg .= "Duration: {$duration}s\n";
+    $msg .= "[View Full Log]($logUrl)";
+    
+    sendTelegram($msg);
+    echo "Deployment Finished. Status: " . ($success ? 'Success' : 'Failed');
+}
+
+function sendTelegram($text) {
+    global $config;
+    if (empty($config['bot_token'])) return false;
+    $url = "https://api.telegram.org/bot{$config['bot_token']}/sendMessage";
+    $data = [
+        'chat_id' => $config['chat_id'],
+        'text' => $text,
+        'parse_mode' => 'Markdown',
+        'message_thread_id' => $config['thread_id']
+    ];
+    
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $res = curl_exec($ch);
+    // curl_close($ch);
+    return $res;
+}
+
+function showLastLog() {
+    global $config;
+    $files = glob($config['logs_path'] . '/*.log');
+    if (!$files) exit('No logs found.');
+    usort($files, fn($a, $b) => filemtime($b) - filemtime($a));
+    header('Content-Type: text/plain');
+    echo file_get_contents($files[0]);
+}
+
+// --- UI VIEWS ---
+
+function renderHealthView() {
+    global $config;
+    $status = getStatus();
+    $serverIp = $_SERVER['SERVER_ADDR'] ?? 'Unknown';
+    $serverName = $_SERVER['SERVER_NAME'];
+    ?>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+        <style type="text/tailwindcss">
+            @theme {
+                --color-raccoon-dark: #0f172a;
+                --color-raccoon-card: #1e293b;
+            }
+        </style>
+        <title>Deployer Health</title>
+    </head>
+    <body class="bg-raccoon-dark text-slate-200 font-sans min-h-screen p-8">
+        <div class="max-w-4xl mx-auto">
+            <header class="flex justify-between items-center mb-12">
+                <div>
+                    <h1 class="text-3xl font-bold tracking-tight text-white">System <span class="text-blue-400">Health</span></h1>
+                    <p class="text-slate-400">PHP-Simple-Deployer Deployment Engine</p>
+                </div>
+                <div class="text-right">
+                    <span class="block text-sm text-slate-500">Resolved as:</span>
+                    <code class="text-blue-300"><?= $serverName ?> (<?= $serverIp ?>)</code>
+                </div>
+            </header>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="bg-raccoon-card p-6 rounded-2xl border border-slate-700 shadow-xl">
+                    <h2 class="text-lg font-semibold mb-4 border-b border-slate-700 pb-2">Environment Variables</h2>
+                    <div class="space-y-3">
+                        <?php foreach($status as $key => $ok): ?>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm font-mono text-slate-400"><?= $key ?></span>
+                            <span class="<?= $ok ? 'text-green-400' : 'text-red-400' ?> text-xs font-bold uppercase">
+                                <?= $ok ? '● Ready' : '○ Missing' ?>
+                            </span>
+                        </div>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+
+                <div class="bg-raccoon-card p-6 rounded-2xl border border-slate-700 shadow-xl flex flex-col justify-between">
+                    <div>
+                        <h2 class="text-lg font-semibold mb-4 border-b border-slate-700 pb-2">Quick Actions</h2>
+                        <div class="space-y-4">
+                            <a href="/test-notify" class="block text-center bg-blue-600 hover:bg-blue-500 text-white py-2 rounded-lg transition">Test Telegram Notification</a>
+                            <button onclick="alert('Trigger webhook POST to /webhook/deploy to test')" class="w-full text-center border border-slate-600 hover:bg-slate-700 text-white py-2 rounded-lg transition">Simulate Execution</button>
+                        </div>
+                    </div>
+                    <?php if(isset($_GET['notified'])): ?>
+                        <p class="mt-4 text-center text-xs <?= $_GET['notified'] == '1' ? 'text-green-400' : 'text-red-400' ?>">
+                            <?= $_GET['notified'] == '1' ? 'Notification Sent Successfully' : 'Notification Failed' ?>
+                        </p>
+                    <?php endif; ?>
+                </div>
+
+                <div class="md:col-span-2 bg-raccoon-card p-6 rounded-2xl border border-slate-700 shadow-xl">
+                    <h2 class="text-lg font-semibold mb-4 border-b border-slate-700 pb-2">Example `deploy.yml`</h2>
+                    <pre class="bg-slate-900 p-4 rounded-lg text-sm text-blue-300 overflow-x-auto">
+- name: Git Pull
+  run: git pull origin main
+- name: Install Dependencies
+  run: composer install --no-dev
+- name: Migration
+  run: php artisan migrate --force
+- name: Build
+  run: npm run build</pre>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    <?php
+}
