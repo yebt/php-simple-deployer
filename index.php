@@ -217,6 +217,39 @@ function clearHistory() {
 
 // --- VIEWS ---
 
+function renderHeadImports(){
+
+return <<<HTML
+<style>
+    /* jetbrains-mono-latin-wght-normal */
+    @font-face {
+        font-family: 'JetBrains Mono Variable';
+        font-style: normal;
+        font-display: swap;
+        font-weight: 100 800;
+        src: url(https://cdn.jsdelivr.net/fontsource/fonts/jetbrains-mono:vf@latest/latin-wght-normal.woff2) format('woff2-variations');
+        unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+    }
+    /* inter-latin-wght-normal */
+    @font-face {
+        font-family: 'Inter Variable';
+        font-style: normal;
+        font-display: swap;
+        font-weight: 100 900;
+        src: url(https://cdn.jsdelivr.net/fontsource/fonts/inter:vf@latest/latin-wght-normal.woff2) format('woff2-variations');
+        unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+    }
+</style>
+<style type="text/tailwindcss">
+    @theme {
+        --color-clifford: #da373d;
+        --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+</style>
+HTML;
+}
+
+
 function renderHealthView() {
     global $config, $statusFile, $defaults;
     $serverIp = $_SERVER['SERVER_ADDR'] ?? 'Local';
@@ -234,6 +267,7 @@ function renderHealthView() {
         <meta charset="UTF-8">
         <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
         <title>System Health - Deployer</title>
+          <?= renderHeadImports() ?>      
     </head>
     <body class="bg-[#0b0f1a] text-slate-300 p-8 font-mono text-sm">
         <div class="max-w-6xl mx-auto">
@@ -259,7 +293,7 @@ function renderHealthView() {
 
             <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
                 <div class="lg:col-span-1 space-y-4">
-                    <div class="bg-[#161b2a] border border-slate-800 p-5 rounded-lg shadow-xl text-[10px]">
+                    <div class="bg-[#161b2a] border border-slate-800 p-5 rounded-lg shadow-xl text-xs --text-[10px]">
                         <h2 class="text-slate-500 font-bold mb-4 border-b border-slate-800 pb-2 uppercase tracking-widest">System Config</h2>
                         <div class="space-y-4">
                             <?php 
@@ -274,7 +308,7 @@ function renderHealthView() {
                                 $isSet = !empty($config[$key]);
                                 $isDefault = isset($defaults[strtoupper($key)]) && $config[$key] === $defaults[strtoupper($key)][0];
                             ?>
-                                <div class="flex flex-row items-center justify-between gap-4">
+                                <div class="flex flex-row items-center justify-between gap-4 leading-[normal]">
                                     <div class="flex items-center gap-1 min-w-0">
                                         <span class="text-slate-500 uppercase truncate"><?= $label ?></span>
                                         <?php if ($isDefault): ?>
