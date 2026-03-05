@@ -33,3 +33,4 @@ phpcs.xml
 
 # End of https://www.toptal.com/developers/gitignore/api/composer,phpunit,phpcodesniffer
 .php-cs-fixer.cache
+.env
