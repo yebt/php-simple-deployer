@@ -42,7 +42,19 @@ if (! is_dir($config['logs_path'])) {
     mkdir($config['logs_path'], 0777, true);
 }
 
+// Ensure paths with realpaths
+foreach (['project_path', 'logs_path'] as $key) {
+    $config[$key] = realpath($config[$key]);
+}
+
 $statusFile = $config['logs_path'].'/.current_status';
+
+// Execute the deployment if called from CLI with the specific argument
+if (isset($argv[1]) && $argv[1] === 'run-deploy') {
+    define('CLI_HOST', $argv[2] ?? 'localhost');
+    executeDeployment();
+    exit;
+}
 
 // 2. Router
 $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
@@ -60,6 +72,19 @@ switch ($uri) {
             http_response_code(405);
             exit('Method Not Allowed');
         }
+
+        if (isset($_GET['manual']) && $_GET['manual'] == '1') {
+            // Ejecutamos el script de despliegue en segundo plano
+            // exec('php '.__FILE__.' run-deploy > /dev/null 2>&1 &');
+
+            $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+            exec("php " . __FILE__ . " run-deploy " . escapeshellarg($host) . " > /dev/null 2>&1 &");
+            // wait lock file
+            usleep(500000);
+            header('Location: /health');
+            exit();
+        }
+
         executeDeployment();
         break;
     case '/log/view':
@@ -100,10 +125,24 @@ function validateSecurity()
 function executeDeployment()
 {
     global $config, $statusFile;
+
+    // Validate required config variables
+    $requiredVars = [
+        'project_path' => $config['project_path'],
+        'instructions' => $config['instructions'],
+    ];
+    foreach ($requiredVars as $label => $value) {
+        if (empty($value) || ! file_exists($value) && $label === 'project_path') {
+            http_response_code(400);
+            exit("Error: Configuración inválida o faltante: $label");
+        }
+    }
+
     if (file_exists($statusFile)) {
         http_response_code(409);
         exit('Deployment already in progress.');
     }
+
     $startTime = microtime(true);
     $logFilename = 'deploy_'.date('Ymd_His').'.log';
     $logPath = $config['logs_path'].'/'.$logFilename;
@@ -126,7 +165,12 @@ function executeDeployment()
     $failedTask = '';
     $fullLog = 'START: '.date('Y-m-d H:i:s')."\n";
 
+    // Al inicio de executeDeployment, inicializa un array de estados
+    $taskStatus = array_fill(0, count($tasks), 'pending');
+
     foreach ($tasks as $index => $task) {
+        $taskStatus[$index] = 'running';
+
         $name = $task['name'] ?? 'Unnamed Task';
         $cmd = $task['run'] ?? '';
         file_put_contents($statusFile, json_encode([
@@ -135,6 +179,7 @@ function executeDeployment()
             'index' => $index + 1,
             'total' => count($tasks),
             'start' => $startTime,
+            'history' => $taskStatus
         ]));
         $fullLog .= "\n[TASK]: $name\n[CMD]: $cmd\n";
         $process = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
@@ -145,6 +190,12 @@ function executeDeployment()
         if ($exitCode !== 0) {
             $success = false;
             $failedTask = $name;
+            // break;
+        }
+        if ($exitCode === 0) {
+            $taskStatus[$index] = 'success';
+        } else {
+            $taskStatus[$index] = 'failed';
             break;
         }
     }
@@ -152,7 +203,11 @@ function executeDeployment()
     file_put_contents($logPath, $fullLog."\nEND. Duration: {$duration}s");
     unlink($statusFile);
     $protocol = isset($_SERVER['HTTPS']) ? 'https://' : 'http://';
-    $logUrl = $protocol.$_SERVER['HTTP_HOST'].'/log/view?file='.urlencode($logFilename);
+    // $logUrl = $protocol.$_SERVER['HTTP_HOST'].'/log/view?file='.urlencode($logFilename);
+    //
+    $host = defined('CLI_HOST') ? CLI_HOST : ($_SERVER['HTTP_HOST'] ?? 'localhost');
+    $logUrl = "http://{$host}/log/view?file=".urlencode($logFilename);
+
     sendTelegram(
         "Simple PHP Deployer Report\nStatus: "
         .($success ? 'SUCCESS' : "FAILED at $failedTask")
@@ -346,10 +401,16 @@ function renderHealthView()
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
-                                <?php foreach ($lastLogs as $logPath):
-                                    $fn = basename($logPath); ?>
+                                <?php foreach ($lastLogs as $logPath): $fn = basename($logPath); 
+                                    $content = file_get_contents($logPath);
+                                    $isOk = str_contains($content, 'Status: SUCCESS');
+                                    ?>
                                     <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition">
-                                        <td class="px-6 py-4 text-slate-700 dark:text-slate-400 font-mono text-xs"><?= $fn ?></td>
+                                        <td class="px-6 py-4 text-xs">
+                                            <span class="mr-2 <?= $isOk ? 'text-emerald-500' : 'text-rose-500' ?>">●</span>
+                                            <?= $fn ?>
+                                        </td>
+                                        <!-- <td class="px-6 py-4 text-slate-700 dark:text-slate-400 font-mono text-xs"><?= $fn ?></td> -->
                                         <td class="px-6 py-4 text-slate-400 dark:text-slate-600 text-xs"><?= date(
                                             'Y-m-d H:i:s',
                                             filemtime($logPath),
@@ -410,6 +471,23 @@ function renderLiveStatus()
                 </div>
                 <div class="text-lg text-slate-900 dark:text-white font-bold tracking-tight"><?= $data['task'] ?></div>
             </div>
+
+                <div class="space-y-2">
+                    <?php foreach ($data['history'] as $i => $status): ?>
+                        <div class="flex items-center text-xs">
+                            <span class="mr-2">
+                                <?php if ($status === 'success') echo '✅'; 
+                                    elseif ($status === 'failed') echo '❌'; 
+                                    elseif ($status === 'running') echo '⏳'; 
+                                    else echo '○'; ?>
+                            </span>
+                            <span class="<?= $status === 'running' ? 'text-white font-bold' : 'text-slate-500' ?>">
+                                Tarea <?= $i + 1 ?>
+                            </span>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+
             <div class="w-full bg-slate-100 dark:bg-slate-950 h-2 mb-4 rounded-full overflow-hidden">
                 <div class="bg-blue-600 h-full transition-all duration-700" style="width: <?= $data['total'] > 0
                     ? ($data['index'] / $data['total']) * 100
