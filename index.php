@@ -19,14 +19,15 @@ if (file_exists(__DIR__.'/.env')) {
 
 // Configuration with Defaults
 $defaults = [
-    'PROJECT_PATH' => [__DIR__, true],
+    // 'PROJECT_PATH' => [__DIR__, true],
     'INSTRUCTIONS_FILE' => ['deploy.json', true],
     'LOGS_PATH' => ['./logs', true],
     'WEBHOOK_METHOD' => ['POST', true],
 ];
 
 $config = [
-    'project_path' => $_ENV['PROJECT_PATH'] ?? $defaults['PROJECT_PATH'][0],
+    // 'project_path' => $_ENV['PROJECT_PATH'] ?? $defaults['PROJECT_PATH'][0],
+    'project_path' => $_ENV['PROJECT_PATH'] ?? null,
     'instructions' => $_ENV['INSTRUCTIONS_FILE'] ?? $defaults['INSTRUCTIONS_FILE'][0],
     'logs_path' => $_ENV['LOGS_PATH'] ?? $defaults['LOGS_PATH'][0],
     'bot_token' => $_ENV['TELEGRAM_BOT_TOKEN'] ?? '',
@@ -283,8 +284,8 @@ function renderHealthView()
 
                             $vars = [
                                 'Path' => 'project_path',
-                                'Instructions' => 'instructions',
-                                'Logs' => 'logs_path',
+                                'Instructions file' => 'instructions',
+                                'Logs path' => 'logs_path',
                                 'Token' => 'bot_token',
                                 'Security' => 'secure_token',
                             ];
@@ -297,15 +298,20 @@ function renderHealthView()
                                 <div class="flex flex-row items-center justify-between gap-4">
                                     <div class="flex items-center gap-1 min-w-0">
                                         <span class="text-slate-400 dark:text-slate-500 uppercase truncate"><?= $label ?></span>
+                                    </div>
+
+                                    <div>
+
                                         <?php if ($isDefault): ?>
                                             <span class="text-slate-400 dark:text-slate-600 font-bold tracking-tighter shrink-0">(DEFAULT)</span>
                                         <?php endif; ?>
+                                        <span class="px-2 py-0.5 rounded font-bold shrink-0 <?= $isSet
+                                            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-500'
+                                            : 'bg-rose-500/10 text-rose-600 dark:text-rose-500' ?>">
+                                            <?= $isSet ? 'CONFIGURED' : 'UNDEFINED' ?>
+                                        </span>
+
                                     </div>
-                                    <span class="px-2 py-0.5 rounded font-bold shrink-0 <?= $isSet
-                                        ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-500'
-                                        : 'bg-rose-500/10 text-rose-600 dark:text-rose-500' ?>">
-                                        <?= $isSet ? 'CONFIGURED' : 'UNDEFINED' ?>
-                                    </span>
                                 </div>
                             <?php endforeach; ?>
                         </div>
