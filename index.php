@@ -279,7 +279,7 @@ function renderHealthView()
                 <div class="lg:col-span-1 space-y-4">
                     <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-5 rounded-lg shadow-sm dark:shadow-xl text-xs">
                         <h2 class="text-slate-400 dark:text-slate-500 font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">System Config</h2>
-                        <div class="space-y-4">
+                        <div class="space-y-4 text-[11px]">
                             <?php
 
                             $vars = [
@@ -308,7 +308,7 @@ function renderHealthView()
                                         <span class="px-2 py-0.5 rounded font-bold shrink-0 <?= $isSet
                                             ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-500'
                                             : 'bg-rose-500/10 text-rose-600 dark:text-rose-500' ?>">
-                                            <?= $isSet ? 'CONFIGURED' : 'UNDEFINED' ?>
+                                            <?= $isSet ? '0K' : '??' ?>
                                         </span>
 
                                     </div>
