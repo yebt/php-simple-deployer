@@ -63,14 +63,17 @@ $method = $_SERVER['REQUEST_METHOD'];
 switch ($uri) {
     case '/status/check':
         header('Content-Type: application/json');
-        if (!file_exists($statusFile)) {
+        if (! file_exists($statusFile)) {
             echo json_encode(['finished' => true]);
         } else {
             $data = json_decode(file_get_contents($statusFile), true);
             echo json_encode(['finished' => isset($data['finished']) && $data['finished'] === true]);
         }
-        exit;
+        exit();
     case '/':
+        // redurect to health view
+        header('Location: /health');
+        break;
     case '/health':
         renderHealthView();
         break;
@@ -281,7 +284,7 @@ function sendTelegram($text)
     curl_setopt($ch, CURLOPT_POSTFIELDS, [
         'chat_id' => $config['chat_id'],
         'text' => $text,
-        'parse_mode' => 'MarkdownV2',
+        // 'parse_mode' => 'MarkdownV2',
         'message_thread_id' => $config['thread_id'],
     ]);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -313,10 +316,21 @@ function showLastLog()
 
 function clearHistory()
 {
-    global $config;
+    global $config, $statusFile;
+
     $logs = glob($config['logs_path'].'/*.log');
     foreach ($logs as $log)
         unlink($log);
+
+    if (file_exists($statusFile)) {
+        $current = json_decode(file_get_contents($statusFile), true);
+        if (isset($current['finished']) && $current['finished'] === true) {
+            unlink($statusFile);
+        } else {
+            http_response_code(409);
+            exit('Deployment already in progress.');
+        }
+    }
     header('Location: /health?cleared=1');
 }
 
@@ -618,7 +632,7 @@ function renderLiveStatus()
 
             <div class="relative pt-1">
                 <div class="overflow-hidden h-1.5 mb-4 text-xs flex rounded bg-slate-100 dark:bg-slate-900">
-                    <div style="width:<?= ($data['running'] ?? true)? (($data['index'] -1)/ $data['total']) * 100 : 100 ?>%" class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-blue-600 transition-all duration-500"></div>
+                    <div style="width:<?= $data['running'] ?? true ? (($data['index'] - 1) / $data['total']) * 100 : 100 ?>%" class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-blue-600 transition-all duration-500"></div>
                 </div>
             </div>
             
