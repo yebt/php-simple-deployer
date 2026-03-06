@@ -61,6 +61,15 @@ $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $method = $_SERVER['REQUEST_METHOD'];
 
 switch ($uri) {
+    case '/status/check':
+        header('Content-Type: application/json');
+        if (!file_exists($statusFile)) {
+            echo json_encode(['finished' => true]);
+        } else {
+            $data = json_decode(file_get_contents($statusFile), true);
+            echo json_encode(['finished' => isset($data['finished']) && $data['finished'] === true]);
+        }
+        exit;
     case '/':
     case '/health':
         renderHealthView();
@@ -272,6 +281,7 @@ function sendTelegram($text)
     curl_setopt($ch, CURLOPT_POSTFIELDS, [
         'chat_id' => $config['chat_id'],
         'text' => $text,
+        'parse_mode' => 'MarkdownV2',
         'message_thread_id' => $config['thread_id'],
     ]);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -356,6 +366,25 @@ function renderHealthView()
         <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
         <title>System Health - Deployer</title>
         <?= renderHeadImports() ?>      
+        <script>
+            <?php if ($isActuallyRunning): ?>
+                const checkStatus = setInterval(async () => {
+                    try {
+                        // Hacemos un fetch a un endpoint que nos devuelva el status breve
+                        const response = await fetch('/status/check');
+                        const data = await response.json();
+
+                        // Si el servidor dice que ya no corre, recargamos la página para actualizar el UI
+                        if (data.finished === true) {
+                            clearInterval(checkStatus);
+                            window.location.reload();
+                        }
+                    } catch (e) {
+                        console.error("Error checking status:", e);
+                    }
+                }, 2000); // Consulta cada 2 segundos
+            <?php endif; ?>
+        </script>
     </head>
     <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-300 p-8 font-mono text-sm transition-colors duration-200">
         <div class="max-w-6xl mx-auto">
