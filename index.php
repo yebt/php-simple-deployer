@@ -6,6 +6,9 @@
  * Format: JSON Instructions
  */
 
+// INITS
+// ================================================================================
+
 // 1. Load .env
 if (file_exists(__DIR__.'/.env')) {
     $lines = file(__DIR__.'/.env', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
@@ -49,6 +52,9 @@ foreach (['project_path', 'logs_path'] as $key) {
 
 $statusFile = $config['logs_path'].'/.current_status';
 
+// CLI CALL
+// ================================================================================
+
 // Execute the deployment if called from CLI with the specific argument
 if (isset($argv[1]) && $argv[1] === 'run-deploy') {
     define('CLI_HOST', $argv[2] ?? 'localhost');
@@ -56,10 +62,54 @@ if (isset($argv[1]) && $argv[1] === 'run-deploy') {
     exit();
 }
 
+// ROUTER
+// ================================================================================
+class RegExpRouter {
+    private $routes = [];
+
+    public function add($pattern, $callback) {
+        // Envolvemos el patrón en delimitadores para PHP
+        $this->routes["#^" . $pattern . "$#"] = $callback;
+    }
+
+    public function resolve($url) {
+        foreach ($this->routes as $pattern => $callback) {
+            if (preg_match($pattern, $url, $matches)) {
+                // Removemos el primer elemento que es la URL completa
+                array_shift($matches);
+                return call_user_func_array($callback, $matches);
+            }
+        }
+        return "404 Not Found";
+    }
+}
+
+$router = new RegExpRouter();
+
+// ROUTES
+// $router->add('/usuario/(\d+)/perfil', function($id) {
+//     echo "Mostrando perfil del usuario con ID: " . $id;
+// });
+
+$router->add('/status/check', 'actionStatusCheck');
+$router->add('/', 'actionHome');
+$router->add('/health', 'actionHealthView');
+$router->add('/webhook/deploy', 'actionWebhookDeploy');
+$router->add('/log/view', 'actionLogView');
+$router->add('/log/rview/([a-zA-Z0-9_]+)', 'actionLogRawView');
+$router->add('/log/last', 'actionLogLast');
+$router->add('/status/live', 'actionStatusLive');
+$router->add('/test-notify', 'actionNotifyTest');
+$router->add('/clear-history', 'actionClearHistory');
+
 // 2. Router
 $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $method = $_SERVER['REQUEST_METHOD'];
 
+$router->resolve($uri);
+
+
+/*
 switch ($uri) {
     case '/status/check':
         header('Content-Type: application/json');
@@ -102,6 +152,9 @@ switch ($uri) {
     case '/log/view':
         showSpecificLog($_GET['file'] ?? '');
         break;
+    // case '/log/rview':
+    //     showSpecificLog($_GET['file'] ?? '');
+        break;
     case '/log/last':
         showLastLog();
         break;
@@ -109,15 +162,164 @@ switch ($uri) {
         renderLiveStatus();
         break;
     case '/test-notify':
-        $res = sendTelegram('Simple PHP Deployer: Test Notification');
+        // @mago-format-ignore-next
+        $res = sendTelegram(
+            <<<MARKDOWN
+*bold \*text*
+_italic \*text_
+__underline__
+~strikethrough~
+||spoiler||
+*bold _italic bold ~italic bold strikethrough ||italic bold strikethrough spoiler||~ __underline italic bold___ bold*
+[inline URL](http://www.example.com/)
+[inline mention of a user](tg://user?id=123456789)
+![👍](tg://emoji?id=5368324170671202286)
+![22:45 tomorrow](tg://time?unix=1647531900&format=wDT)
+![22:45 tomorrow](tg://time?unix=1647531900&format=t)
+![22:45 tomorrow](tg://time?unix=1647531900&format=r)
+![22:45 tomorrow](tg://time?unix=1647531900)
+`inline fixed-width code`
+```
+pre-formatted fixed-width code block
+```
+```python
+pre-formatted fixed-width code block written in the Python programming language
+```
+>Block quotation started
+>Block quotation continued
+>Block quotation continued
+>Block quotation continued
+>The last line of the block quotation
+**>The expandable block quotation started right after the previous block quotation
+>It is separated from the previous block quotation by an empty bold entity
+>Expandable block quotation continued
+>Hidden by default part of the expandable block quotation started
+>Expandable block quotation continued
+>The last line of the expandable block quotation with the expandability mark||
+MARKDOWN
+        );
         header('Location: /health?notified='.($res ? '1' : '0'));
         break;
     case '/clear-history':
         clearHistory();
         break;
 }
+*/
+
+// --- ACTIONS ---
+// ================================================================================
+
+function actionStatusCheck(){
+    global $statusFile;
+
+    header('Content-Type: application/json');
+    if (! file_exists($statusFile)) {
+        echo json_encode(['finished' => true]);
+    } else {
+        $data = json_decode(file_get_contents($statusFile), true);
+        echo json_encode(['finished' => isset($data['finished']) && $data['finished'] === true]);
+    }
+    exit();
+}
+
+function actionHome(){
+    header('Location: /health');
+    exit();
+}
+
+function actionHealthView(){
+    renderHealthView();
+}
+
+function actionWebhookDeploy(){
+    global $config, $method;
+        validateSecurity();
+        $manual = isset($_GET['manual']) && $_GET['manual'] == '1';
+        if ($method !== $config['webhook_method'] && ! ($manual && $method === 'GET')) {
+            http_response_code(405);
+            exit('Method Not Allowed');
+        }
+
+        if (isset($_GET['manual']) && $_GET['manual'] == '1') {
+            // Ejecutamos el script de despliegue en segundo plano
+            // exec('php '.__FILE__.' run-deploy > /dev/null 2>&1 &');
+
+            $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+            exec('php '.__FILE__.' run-deploy '.escapeshellarg($host).' > /dev/null 2>&1 &');
+            // wait lock file
+            usleep(500000);
+            header('Location: /health');
+            exit();
+        }
+
+        executeDeployment();
+
+}
+
+function actionLogView(){
+    showSpecificLog($_GET['file'] ?? '');
+}
+
+function actionLogRawView($id){
+    $file = $id . '.log';
+    showSpecificLog($file);
+}
+
+function actionLogLast(){
+    showLastLog();
+}
+
+function actionStatusLive(){
+    renderLiveStatus();
+}
+
+function actionNotifyTest(){
+        // @mago-format-ignore-next
+        $res = sendTelegram(
+            <<<MARKDOWN
+*bold \*text*
+_italic \*text_
+__underline__
+~strikethrough~
+||spoiler||
+*bold _italic bold ~italic bold strikethrough ||italic bold strikethrough spoiler||~ __underline italic bold___ bold*
+[inline URL](http://www.example.com/)
+[inline mention of a user](tg://user?id=123456789)
+![👍](tg://emoji?id=5368324170671202286)
+![22:45 tomorrow](tg://time?unix=1647531900&format=wDT)
+![22:45 tomorrow](tg://time?unix=1647531900&format=t)
+![22:45 tomorrow](tg://time?unix=1647531900&format=r)
+![22:45 tomorrow](tg://time?unix=1647531900)
+`inline fixed-width code`
+```
+pre-formatted fixed-width code block
+```
+```python
+pre-formatted fixed-width code block written in the Python programming language
+```
+>Block quotation started
+>Block quotation continued
+>Block quotation continued
+>Block quotation continued
+>The last line of the block quotation
+**>The expandable block quotation started right after the previous block quotation
+>It is separated from the previous block quotation by an empty bold entity
+>Expandable block quotation continued
+>Hidden by default part of the expandable block quotation started
+>Expandable block quotation continued
+>The last line of the expandable block quotation with the expandability mark||
+MARKDOWN
+        );
+        header('Location: /health?notified='.($res ? '1' : '0'));
+
+}
+
+function actionClearHistory(){
+    clearHistory();
+}
 
 // --- LOGIC ---
+// ================================================================================
 
 function validateSecurity()
 {
@@ -259,13 +461,12 @@ function executeDeployment()
     // $logUrl = $protocol.$_SERVER['HTTP_HOST'].'/log/view?file='.urlencode($logFilename);
     //
     $host = defined('CLI_HOST') ? CLI_HOST : $_SERVER['HTTP_HOST'] ?? 'localhost';
-    $logUrl = "$protocol{$host}/log/view?file=".urlencode($logFilename);
+    // $logUrl = "$protocol{$host}/log/view?file=".urlencode($logFilename);
+    $logfileNameWithoutExt = pathinfo($logFilename, PATHINFO_FILENAME); 
+    $logUrl = "$protocol{$host}/log/rview/{$logfileNameWithoutExt}";
+    
 
-    sendTelegram(
-        "Simple PHP Deployer Report\nStatus: "
-        .($success ? 'SUCCESS' : "FAILED at $failedTask")
-        ."\nDuration: {$duration}s\nLink: $logUrl",
-    );
+    sendTelegram(buildReport($host, $success, $duration, $logUrl, $failedTask ?? ''));
     if (! isset($_GET['manual']))
         echo 'Done.';
 
@@ -278,18 +479,67 @@ function executeDeployment()
 function sendTelegram($text)
 {
     global $config;
-    if (empty($config['bot_token']))
+    $botTkn = $config['bot_token'] ?? '';
+    if (empty($botTkn))
         return false;
-    $ch = curl_init("https://api.telegram.org/bot{$config['bot_token']}/sendMessage");
-    curl_setopt($ch, CURLOPT_POSTFIELDS, [
+
+    $ch = curl_init("https://api.telegram.org/bot{$botTkn}/sendMessage");
+
+    $payload = [
         'chat_id' => $config['chat_id'],
+        'parse_mode' => 'MarkdownV2',
         'text' => $text,
-        // 'parse_mode' => 'MarkdownV2',
-        'message_thread_id' => $config['thread_id'],
-    ]);
+    ];
+    if ($config['thread_id']) {
+        $payload['message_thread_id'] = $config['thread_id'];
+    }
+
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 
-    return curl_exec($ch);
+    $response = curl_exec($ch);
+    $error = curl_error($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+    if ($response === false || $httpCode !== 200) {
+        $logEntry = sprintf(
+            "[%s] HTTP Code: %s | Error: %s | Response: %s | Params: %s\n",
+            date('Y-m-d H:i:s'),
+            $httpCode,
+            $error,
+            $response,
+            json_encode($payload),
+        );
+        file_put_contents($config['logs_path'].'/telegram_errors.log', $logEntry, FILE_APPEND);
+
+        return false;
+    }
+
+    return true;
+}
+
+function buildReport($appName, $success, $duration, $logUrl, $failedTask = '')
+{
+    $emoji = $success ? '✅' : '❌';
+    $status = $success ? 'SUCCESS' : "FAILED at $failedTask";
+
+    // The characters to be escaped in most contexts are:
+    // _, *, [, ], (, ), ~, `, >, #, +, -, =, |, {, }, ., !. 
+    // *SPHPD: $emoji $appName*
+    // *Status:* _{$status}_
+    // *Duration:* _{$duration}s_
+    // *Log:* [View Details]($logUrl)
+
+    $duration = str_replace('.', '\.', $duration . "");
+
+    // @mago-format-ignore-next
+    return <<<MARKDOWN
+*$emoji SPHPD:* `$appName`
+
+*Status:* _{$status}_
+*Duration:* _{$duration}s_
+*Log:* [View Details]($logUrl)
+MARKDOWN;
 }
 
 function showSpecificLog($file)
@@ -335,6 +585,7 @@ function clearHistory()
 }
 
 // --- VIEWS ---
+// ================================================================================
 
 function renderHeadImports()
 {
