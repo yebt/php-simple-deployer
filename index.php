@@ -53,7 +53,7 @@ $statusFile = $config['logs_path'].'/.current_status';
 if (isset($argv[1]) && $argv[1] === 'run-deploy') {
     define('CLI_HOST', $argv[2] ?? 'localhost');
     executeDeployment();
-    exit;
+    exit();
 }
 
 // 2. Router
@@ -78,7 +78,7 @@ switch ($uri) {
             // exec('php '.__FILE__.' run-deploy > /dev/null 2>&1 &');
 
             $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
-            exec("php " . __FILE__ . " run-deploy " . escapeshellarg($host) . " > /dev/null 2>&1 &");
+            exec('php '.__FILE__.' run-deploy '.escapeshellarg($host).' > /dev/null 2>&1 &');
             // wait lock file
             usleep(500000);
             header('Location: /health');
@@ -139,9 +139,19 @@ function executeDeployment()
     }
 
     if (file_exists($statusFile)) {
-        http_response_code(409);
-        exit('Deployment already in progress.');
+        $current = json_decode(file_get_contents($statusFile), true);
+        // Si el proceso anterior ya terminó, borramos el lock viejo para permitir el nuevo
+        if (isset($current['finished']) && $current['finished'] === true) {
+            unlink($statusFile);
+        } else {
+            http_response_code(409);
+            exit('Deployment already in progress.');
+        }
     }
+    // if (file_exists($statusFile)) {
+    //     http_response_code(409);
+    //     exit('Deployment already in progress.');
+    // }
 
     $startTime = microtime(true);
     $logFilename = 'deploy_'.date('Ymd_His').'.log';
@@ -166,20 +176,27 @@ function executeDeployment()
     $fullLog = 'START: '.date('Y-m-d H:i:s')."\n";
 
     // Al inicio de executeDeployment, inicializa un array de estados
-    $taskStatus = array_fill(0, count($tasks), 'pending');
+    // $taskStatus = array_fill(0, count($tasks), 'pending');
+
+    $taskStatus = array_fill(0, count($tasks), ['status' => 'pending', 'name' => '']);
+    foreach ($tasks as $i => $t) {
+        $taskStatus[$i]['name'] = $t['name'] ?? 'Task '.($i + 1);
+    }
 
     foreach ($tasks as $index => $task) {
-        $taskStatus[$index] = 'running';
+        // $taskStatus[$index] = 'running';
+        $taskStatus[$index]['status'] = 'running'; // Cambiamos solo el status
 
         $name = $task['name'] ?? 'Unnamed Task';
         $cmd = $task['run'] ?? '';
+
         file_put_contents($statusFile, json_encode([
             'running' => true,
             'task' => $name,
             'index' => $index + 1,
             'total' => count($tasks),
             'start' => $startTime,
-            'history' => $taskStatus
+            'history' => $taskStatus,
         ]));
         $fullLog .= "\n[TASK]: $name\n[CMD]: $cmd\n";
         $process = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
@@ -190,33 +207,60 @@ function executeDeployment()
         if ($exitCode !== 0) {
             $success = false;
             $failedTask = $name;
+
             // break;
         }
         if ($exitCode === 0) {
-            $taskStatus[$index] = 'success';
+            // $taskStatus[$index] = 'success';
+            $taskStatus[$index]['status'] = 'success';
         } else {
-            $taskStatus[$index] = 'failed';
+            // $taskStatus[$index] = 'failed';
+            $taskStatus[$index]['status'] = 'failed';
+            // Guardamos el último estado antes de salir por error
+            file_put_contents($statusFile, json_encode([
+                'running' => false, // Detener animación en live si falló
+                'task' => "FAILED: $name",
+                'index' => $index + 1,
+                'total' => count($tasks),
+                'history' => $taskStatus,
+            ]));
             break;
         }
     }
     $duration = round(microtime(true) - $startTime, 2);
     file_put_contents($logPath, $fullLog."\nEND. Duration: {$duration}s");
-    unlink($statusFile);
+    // unlink($statusFile);
+    file_put_contents($statusFile, json_encode([
+        'running' => false, // IMPORTANTE: Ya no está corriendo
+        'finished' => true,
+        'success' => $success,
+        'task' => $success ? 'Deployment Finished Successfully' : 'Deployment Failed',
+        'index' => $index + 1,
+        'total' => count($tasks),
+        'start' => $startTime,
+        'duration' => $duration,
+        'history' => $taskStatus,
+        'log_file' => $logFilename,
+    ]));
+
     $protocol = isset($_SERVER['HTTPS']) ? 'https://' : 'http://';
     // $logUrl = $protocol.$_SERVER['HTTP_HOST'].'/log/view?file='.urlencode($logFilename);
     //
-    $host = defined('CLI_HOST') ? CLI_HOST : ($_SERVER['HTTP_HOST'] ?? 'localhost');
-    $logUrl = "http://{$host}/log/view?file=".urlencode($logFilename);
+    $host = defined('CLI_HOST') ? CLI_HOST : $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $logUrl = "$protocol{$host}/log/view?file=".urlencode($logFilename);
 
     sendTelegram(
         "Simple PHP Deployer Report\nStatus: "
         .($success ? 'SUCCESS' : "FAILED at $failedTask")
         ."\nDuration: {$duration}s\nLink: $logUrl",
     );
-    if (isset($_GET['manual']))
-        header('Location: /health?deployed='.($success ? '1' : '0'));
-    else
+    if (! isset($_GET['manual']))
         echo 'Done.';
+
+    // if (isset($_GET['manual']))
+    //     header('Location: /health?deployed='.($success ? '1' : '0'));
+    // else
+    //     echo 'Done.';
 }
 
 function sendTelegram($text)
@@ -291,6 +335,7 @@ function renderHeadImports()
 function renderHealthView()
 {
     global $config, $statusFile, $defaults;
+
     $serverIp = $_SERVER['SERVER_ADDR'] ?? 'Local';
     $serverDomain = $_SERVER['HTTP_HOST'] ?? 'Unknown Domain';
     $phpVersion = PHP_VERSION;
@@ -299,6 +344,10 @@ function renderHealthView()
     usort($logs, fn ($a, $b) => filemtime($b) - filemtime($a));
     $lastLogs = array_slice($logs, 0, 5);
     $isDeploying = file_exists($statusFile);
+
+    $statusData = file_exists($statusFile) ? json_decode(file_get_contents($statusFile), true) : null;
+    $isActuallyRunning = $statusData && (! isset($statusData['finished']) || ! $statusData['finished']);
+
     ?>
     <!DOCTYPE html>
     <html lang="en">
@@ -319,7 +368,7 @@ function renderHealthView()
                         PHP: <span class="text-slate-600 dark:text-slate-400"><?= $phpVersion ?></span>
                     </p>
                 </div>
-                <?php if ($isDeploying): ?>
+                <?php if ($isActuallyRunning): ?>
                     <a href="/status/live" class="bg-blue-600 text-white px-3 py-1 text-xs font-bold rounded shadow-lg shadow-blue-500/20 animate-pulse">PROCESS RUNNING</a>
                 <?php endif; ?>
             </div>
@@ -375,10 +424,23 @@ function renderHealthView()
                     <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-5 rounded-lg shadow-sm dark:shadow-xl">
                         <h2 class="text-slate-400 dark:text-slate-500 text-[10px] font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">Quick Actions</h2>
                         <div class="space-y-2">
-                            <?php if ($isDeploying): ?>
-                                <button disabled class="block w-full text-center bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 py-2 rounded text-xs font-bold cursor-not-allowed">DEPLOY IN PROGRESS</button>
+
+                            <?php if ($isActuallyRunning): ?>
+                                <button disabled class="block w-full text-center bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 py-2 rounded text-xs font-bold cursor-not-allowed uppercase tracking-widest">
+                                    <span class="inline-block w-2 h-2 bg-blue-500 rounded-full animate-ping mr-2"></span>
+                                    Running...
+                                </button>
                             <?php else: ?>
-                                <a href="/webhook/deploy?manual=1" class="block w-full text-center bg-slate-800 dark:bg-slate-800 text-white py-2 rounded text-xs font-bold hover:bg-slate-700 dark:hover:bg-slate-700 transition">MANUAL DEPLOY</a>
+                                <a href="/webhook/deploy?manual=1" 
+                                    onclick="return confirm('Start deployment?')"
+                                    class="block w-full text-center bg-slate-800 dark:bg-slate-800 text-white py-2 rounded text-xs font-bold hover:bg-slate-700 dark:hover:bg-slate-700 transition">MANUAL DEPLOY</a>
+
+                            <?php endif; ?>
+
+                            <?php if (isset($statusData['finished'])): ?>
+                                <a href="/status/live" class="block w-full text-center border border-emerald-500/30 text-emerald-500 py-2 rounded text-[10px] font-bold hover:bg-emerald-500/5 transition uppercase">
+                                    View Last Result
+                                </a>
                             <?php endif; ?>
                             <a href="/test-notify" class="block w-full text-center border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 py-2 rounded text-xs transition">TEST NOTIFICATION</a>
                             <a href="/clear-history" onclick="return confirm('Clear all logs?')" class="block w-full text-center text-rose-500 hover:text-rose-500 py-2 text-xs transition">CLEAR HISTORY</a>
@@ -401,7 +463,8 @@ function renderHealthView()
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
-                                <?php foreach ($lastLogs as $logPath): $fn = basename($logPath); 
+                                <?php foreach ($lastLogs as $logPath):
+                                    $fn = basename($logPath);
                                     $content = file_get_contents($logPath);
                                     $isOk = str_contains($content, 'Status: SUCCESS');
                                     ?>
@@ -452,48 +515,114 @@ function renderLiveStatus()
         exit();
     }
     $data = json_decode(file_get_contents($statusFile), true);
+    $isFinished = isset($data['finished']) && $data['finished'] === true;
     ?>
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
-        <meta http-equiv="refresh" content="2">
+            <?php if (! $isFinished): ?>
+            <meta http-equiv="refresh" content="2">
+            <?php endif; ?>
         <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
         <title>Execution Status</title>
         <?= renderHeadImports() ?>
     </head>
     <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-400 min-h-screen flex items-center justify-center font-mono p-6 transition-colors duration-200">
-        <div class="w-full max-w-xl p-10 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-2xl">
-            <div class="mb-8 text-center lg:text-left">
-                <div class="text-[10px] text-slate-400 dark:text-slate-500 mb-2 uppercase tracking-widest flex justify-between">
-                    <span>Task <?= $data['index'] ?> / <?= $data['total'] ?></span>
-                    <span class="animate-pulse text-blue-600 dark:text-blue-400 font-bold">● Executing</span>
+        <div class="w-full max-w-2xl p-8 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl">
+            
+            <div class="mb-8 flex justify-between items-end border-b border-slate-100 dark:border-slate-800 pb-6">
+                <div>
+                    <div class="text-[10px] text-slate-400 dark:text-slate-500 mb-1 uppercase tracking-[0.2em]">Current Progress</div>
+                    <div class="text-xl text-slate-900 dark:text-white font-bold tracking-tight">
+                        <?= $data['task'] ?>
+                    </div>
                 </div>
-                <div class="text-lg text-slate-900 dark:text-white font-bold tracking-tight"><?= $data['task'] ?></div>
+                <div class="text-right">
+                    <span class="text-2xl font-black text-slate-200 dark:text-slate-800"><?= $data['index'] ?>/<?= $data['total'] ?></span>
+                </div>
             </div>
 
-                <div class="space-y-2">
-                    <?php foreach ($data['history'] as $i => $status): ?>
-                        <div class="flex items-center text-xs">
-                            <span class="mr-2">
-                                <?php if ($status === 'success') echo '✅'; 
-                                    elseif ($status === 'failed') echo '❌'; 
-                                    elseif ($status === 'running') echo '⏳'; 
-                                    else echo '○'; ?>
+            <div class="space-y-3 mb-8">
+                <?php foreach ($data['history'] as $i => $item):
+                    $status = $item['status'];
+                    $name = $item['name'];
+
+                    // Definición de estilos por estado
+                    $badgeClass = match ($status) {
+                        'success' => 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
+                        'failed' => 'bg-rose-500/10 text-rose-500 border-rose-500/20 animate-pulse',
+                        'running' => 'bg-blue-500/10 text-blue-500 border-blue-500/40 border',
+                        default => 'bg-slate-100 dark:bg-slate-800/50 text-slate-400 border-transparent',
+                    };
+
+                    $label = match ($status) {
+                        'success' => 'DONE',
+                        'failed' => 'FAIL',
+                        'running' => 'BUSY',
+                        default => 'WAIT',
+                    };
+                    ?>
+                    <div class="flex items-center justify-between p-3 rounded-lg border <?= $status === 'running'
+                        ? 'border-blue-500/20 bg-blue-500/5'
+                        : 'border-transparent' ?> transition-all">
+                        <div class="flex items-center gap-3">
+                            <span class="text-[10px] px-2 py-0.5 rounded font-bold border uppercase <?= $badgeClass ?>">
+                                <?= $label ?>
                             </span>
-                            <span class="<?= $status === 'running' ? 'text-white font-bold' : 'text-slate-500' ?>">
-                                Tarea <?= $i + 1 ?>
+                            <span class="text-xs <?= $status === 'running'
+                                ? 'text-slate-900 dark:text-white font-bold'
+                                : ($status === 'pending' ? 'text-slate-500' : 'text-slate-700 dark:text-slate-400') ?>">
+                                <?= $name ?>
                             </span>
                         </div>
-                    <?php endforeach; ?>
-                </div>
-
-            <div class="w-full bg-slate-100 dark:bg-slate-950 h-2 mb-4 rounded-full overflow-hidden">
-                <div class="bg-blue-600 h-full transition-all duration-700" style="width: <?= $data['total'] > 0
-                    ? ($data['index'] / $data['total']) * 100
-                    : 0 ?>%"></div>
+                        <?php if ($status === 'running'): ?>
+                            <div class="flex gap-1">
+                                <span class="w-1 h-1 bg-blue-500 rounded-full animate-bounce"></span>
+                                <span class="w-1 h-1 bg-blue-500 rounded-full animate-bounce [animation-delay:0.2s]"></span>
+                                <span class="w-1 h-1 bg-blue-500 rounded-full animate-bounce [animation-delay:0.4s]"></span>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                <?php endforeach; ?>
             </div>
-            <p class="text-[10px] text-slate-400 dark:text-slate-600 italic">Capturing output... Auto-refreshing UI.</p>
+
+            <div class="relative pt-1">
+                <div class="overflow-hidden h-1.5 mb-4 text-xs flex rounded bg-slate-100 dark:bg-slate-900">
+                    <div style="width:<?= ($data['running'] ?? true)? (($data['index'] -1)/ $data['total']) * 100 : 100 ?>%" class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-blue-600 transition-all duration-500"></div>
+                </div>
+            </div>
+            
+            <div class="flex justify-between items-center">
+                <p class="text-[9px] text-slate-400 dark:text-slate-600 uppercase tracking-widest italic">
+                    <?php if ($data['running'] ?? true): ?>
+                        System executing instructions...
+                    <?php else: ?>
+                        Process halted. Check logs.
+                    <?php endif; ?>
+                </p>
+                <a href="/health" class="text-[10px] text-blue-500 hover:underline">Exit Live View</a>
+            </div>
+
+            <?php if ($isFinished): ?>
+                <div class="mb-6 p-4 rounded-lg border <?= $data['success']
+                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500'
+                    : 'bg-rose-500/10 border-rose-500/20 text-rose-500' ?> flex justify-between items-center uppercase text-[10px] font-bold tracking-widest">
+                    <span><?= $data['success'] ? '✓ Deployment Completed' : '✕ Deployment Failed' ?></span>
+                    <span>Duration: <?= $data['duration'] ?>s</span>
+                </div>
+            <?php endif; ?>
+
+            <div class="mt-8 flex justify-between items-center border-t border-slate-100 dark:border-slate-800 pt-6">
+                <?php if ($isFinished): ?>
+                    <div class="flex gap-4">
+                        <a href="/health" class="bg-slate-800 text-white px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-700 transition">BACK TO DASHBOARD</a>
+                        <a href="/log/view?file=<?= urlencode($data['log_file']) ?>" class="border border-slate-200 dark:border-slate-800 px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition">VIEW FULL LOG</a>
+                    </div>
+                <?php else: ?>
+                    <p class="text-[9px] text-slate-400 italic animate-pulse tracking-widest">SYNCING WITH SERVER...</p>
+                <?php endif; ?>
+            </div>
         </div>
     </body>
     </html>
