@@ -73,14 +73,23 @@ class RegExpRouter {
     }
 
     public function resolve($url) {
+        $path = parse_url($url, PHP_URL_PATH);
+
         foreach ($this->routes as $pattern => $callback) {
-            if (preg_match($pattern, $url, $matches)) {
-                // Removemos el primer elemento que es la URL completa
+            // if (preg_match($pattern, $url, $matches)) {
+            if (preg_match($pattern, $path, $matches)) {
+                // remove the full match from the beginning of the array
                 array_shift($matches);
                 return call_user_func_array($callback, $matches);
             }
         }
-        return "404 Not Found";
+
+        // $notFoundCallback = $this->routes['#^/404$#'] ?? function(){
+        $notFoundCallback = $this->routes['#^404$#'] ?? function(){
+            header('HTTP/1.0 404 Not Found');
+            echo "404 Not Found";
+        };
+        return call_user_func($notFoundCallback);
     }
 }
 
@@ -101,6 +110,11 @@ $router->add('/log/last', 'actionLogLast');
 $router->add('/status/live', 'actionStatusLive');
 $router->add('/test-notify', 'actionNotifyTest');
 $router->add('/clear-history', 'actionClearHistory');
+
+$router->add('404', function(){
+    header('HTTP/1.0 404 Not Found');
+    echo "404 Route Not Found";
+});
 
 // 2. Router
 $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
