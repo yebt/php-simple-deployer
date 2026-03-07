@@ -64,15 +64,18 @@ if (isset($argv[1]) && $argv[1] === 'run-deploy') {
 
 // ROUTER
 // ================================================================================
-class RegExpRouter {
+class RegExpRouter
+{
     private $routes = [];
 
-    public function add($pattern, $callback) {
+    public function add($pattern, $callback)
+    {
         // Envolvemos el patrón en delimitadores para PHP
-        $this->routes["#^" . $pattern . "$#"] = $callback;
+        $this->routes['#^'.$pattern.'$#'] = $callback;
     }
 
-    public function resolve($url) {
+    public function resolve($url)
+    {
         $path = parse_url($url, PHP_URL_PATH);
 
         foreach ($this->routes as $pattern => $callback) {
@@ -80,20 +83,22 @@ class RegExpRouter {
             if (preg_match($pattern, $path, $matches)) {
                 // remove the full match from the beginning of the array
                 array_shift($matches);
+
                 return call_user_func_array($callback, $matches);
             }
         }
 
         // $notFoundCallback = $this->routes['#^/404$#'] ?? function(){
-        $notFoundCallback = $this->routes['#^404$#'] ?? function(){
+        $notFoundCallback = $this->routes['#^404$#'] ?? function () {
             header('HTTP/1.0 404 Not Found');
-            echo "404 Not Found";
+            echo '404 Not Found';
         };
+
         return call_user_func($notFoundCallback);
     }
 }
 
-$router = new RegExpRouter();
+$router = new RegExpRouter;
 
 // ROUTES
 // $router->add('/usuario/(\d+)/perfil', function($id) {
@@ -111,9 +116,9 @@ $router->add('/status/live', 'actionStatusLive');
 $router->add('/test-notify', 'actionNotifyTest');
 $router->add('/clear-history', 'actionClearHistory');
 
-$router->add('404', function(){
+$router->add('404', function () {
     header('HTTP/1.0 404 Not Found');
-    echo "404 Route Not Found";
+    echo '404 Route Not Found';
 });
 
 // 2. Router
@@ -121,7 +126,6 @@ $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $method = $_SERVER['REQUEST_METHOD'];
 
 $router->resolve($uri);
-
 
 /*
 switch ($uri) {
@@ -236,59 +240,66 @@ function actionStatusCheck(){
     exit();
 }
 
-function actionHome(){
+function actionHome()
+{
     header('Location: /health');
     exit();
 }
 
-function actionHealthView(){
+function actionHealthView()
+{
     renderHealthView();
 }
 
-function actionWebhookDeploy(){
+function actionWebhookDeploy()
+{
     global $config, $method;
-        validateSecurity();
-        $manual = isset($_GET['manual']) && $_GET['manual'] == '1';
-        if ($method !== $config['webhook_method'] && ! ($manual && $method === 'GET')) {
-            http_response_code(405);
-            exit('Method Not Allowed');
-        }
+    validateSecurity();
+    $manual = isset($_GET['manual']) && $_GET['manual'] == '1';
+    if ($method !== $config['webhook_method'] && ! ($manual && $method === 'GET')) {
+        http_response_code(405);
+        exit('Method Not Allowed');
+    }
 
-        if (isset($_GET['manual']) && $_GET['manual'] == '1') {
-            // Ejecutamos el script de despliegue en segundo plano
-            // exec('php '.__FILE__.' run-deploy > /dev/null 2>&1 &');
+    if (isset($_GET['manual']) && $_GET['manual'] == '1') {
+        // Ejecutamos el script de despliegue en segundo plano
+        // exec('php '.__FILE__.' run-deploy > /dev/null 2>&1 &');
 
-            $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
-            exec('php '.__FILE__.' run-deploy '.escapeshellarg($host).' > /dev/null 2>&1 &');
-            // wait lock file
-            usleep(500000);
-            header('Location: /health');
-            exit();
-        }
+        $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+        exec('php '.__FILE__.' run-deploy '.escapeshellarg($host).' > /dev/null 2>&1 &');
+        // wait lock file
+        usleep(500000);
+        header('Location: /health');
+        exit();
+    }
 
-        executeDeployment();
-
+    executeDeployment();
 }
 
-function actionLogView(){
+function actionLogView()
+{
     showSpecificLog($_GET['file'] ?? '');
 }
 
-function actionLogRawView($id){
-    $file = $id . '.log';
+function actionLogRawView($id)
+{
+    $file = $id.'.log';
     showSpecificLog($file);
 }
 
-function actionLogLast(){
+function actionLogLast()
+{
     showLastLog();
 }
 
-function actionStatusLive(){
+function actionStatusLive()
+{
     renderLiveStatus();
 }
 
-function actionNotifyTest(){
-        // @mago-format-ignore-next
+function actionNotifyTest()
+{
+    // @mago-format-ignore-next
         $res = sendTelegram(
             <<<MARKDOWN
 *bold \*text*
@@ -324,11 +335,11 @@ pre-formatted fixed-width code block written in the Python programming language
 >The last line of the expandable block quotation with the expandability mark||
 MARKDOWN
         );
-        header('Location: /health?notified='.($res ? '1' : '0'));
-
+    header('Location: /health?notified='.($res ? '1' : '0'));
 }
 
-function actionClearHistory(){
+function actionClearHistory()
+{
     clearHistory();
 }
 
@@ -476,9 +487,8 @@ function executeDeployment()
     //
     $host = defined('CLI_HOST') ? CLI_HOST : $_SERVER['HTTP_HOST'] ?? 'localhost';
     // $logUrl = "$protocol{$host}/log/view?file=".urlencode($logFilename);
-    $logfileNameWithoutExt = pathinfo($logFilename, PATHINFO_FILENAME); 
+    $logfileNameWithoutExt = pathinfo($logFilename, PATHINFO_FILENAME);
     $logUrl = "$protocol{$host}/log/rview/{$logfileNameWithoutExt}";
-    
 
     sendTelegram(buildReport($host, $success, $duration, $logUrl, $failedTask ?? ''));
     if (! isset($_GET['manual']))
@@ -535,16 +545,22 @@ function sendTelegram($text)
 function buildReport($appName, $success, $duration, $logUrl, $failedTask = '')
 {
     $emoji = $success ? '✅' : '❌';
+    // decode $failedTask for markdown special characters
+    $failedTask = $failedTask ? str_replace(
+        ['\\', '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'],
+        ['\\\\', '\\_', '\\*', '\\[', '\\]', '\\(', '\\)', '\\~', '\\`', '\\>', '\\#', '\\+', '\\-', '\\=', '\\|', '\\{', '\\}', '\\.', '\\!'],
+        $failedTask,
+    ) : '';
     $status = $success ? 'SUCCESS' : "FAILED at $failedTask";
 
     // The characters to be escaped in most contexts are:
-    // _, *, [, ], (, ), ~, `, >, #, +, -, =, |, {, }, ., !. 
+    // _, *, [, ], (, ), ~, `, >, #, +, -, =, |, {, }, ., !.
     // *SPHPD: $emoji $appName*
     // *Status:* _{$status}_
     // *Duration:* _{$duration}s_
     // *Log:* [View Details]($logUrl)
 
-    $duration = str_replace('.', '\.', $duration . "");
+    $duration = str_replace('.', '\.', $duration.'');
 
     // @mago-format-ignore-next
     return <<<MARKDOWN
@@ -774,14 +790,22 @@ function renderHealthView()
                                 <?php foreach ($lastLogs as $logPath):
                                     $fn = basename($logPath);
                                     $content = file_get_contents($logPath);
-                                    $isOk = str_contains($content, 'Status: SUCCESS');
+                                    // $isOk = str_contains($content, 'Status: SUCCESS');
+                                    // get the penultimate line of the log
+                                    $lines = preg_split('/\r\n|\r|\n/', trim($content));
+                                    $linesQuantity = count($lines);
+                                    $exitLastStatus = $lines[$linesQuantity - 3] ?? '';
+                                    $isOk = str_contains($exitLastStatus, 'EXIT: 0');
+
                                     ?>
                                     <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition">
                                         <td class="px-6 py-4 text-xs">
                                             <span class="mr-2 <?= $isOk ? 'text-emerald-500' : 'text-rose-500' ?>">●</span>
                                             <?= $fn ?>
                                         </td>
+
                                         <!-- <td class="px-6 py-4 text-slate-700 dark:text-slate-400 font-mono text-xs"><?= $fn ?></td> -->
+
                                         <td class="px-6 py-4 text-slate-400 dark:text-slate-600 text-xs"><?= date(
                                             'Y-m-d H:i:s',
                                             filemtime($logPath),
