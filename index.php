@@ -137,6 +137,7 @@ $router->add('/status/check', 'actionStatusCheck');
 $router->add('/', 'actionHome');
 $router->add('/health', 'actionHealthView');
 $router->add('/webhook/deploy', 'actionWebhookDeploy');
+$router->add('/webhook/deploy/nowait', 'actionWebhookDeployNoWait');
 $router->add('/log/view', 'actionLogView');
 $router->add('/log/rview/([a-zA-Z0-9_]+)', 'actionLogRawView');
 $router->add('/log/last', 'actionLogLast');
@@ -206,6 +207,27 @@ function actionWebhookDeploy()
     }
 
     executeDeployment();
+}
+
+function actionWebhookDeployNoWait()
+{
+    global $config, $method;
+    validateSecurity();
+    if ($method !== $config['webhook_method'] ) {
+        http_response_code(405);
+        exit('Method Not Allowed');
+    }
+
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    exec('php '.__FILE__.' run-deploy '.escapeshellarg($host).' > /dev/null 2>&1 &');
+
+    // set header json
+    http_response_code(202); 
+    header('Content-Type: application/json');
+    echo json_encode([
+        'status' => 'accepted',
+        'message' => 'Deployment initiated in background',
+    ]);
 }
 
 function actionLogView()
