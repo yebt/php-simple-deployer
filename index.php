@@ -5,6 +5,14 @@
  * Minimalist Technical UI - PHP 8.5+
  * Format: JSON Instructions
  */
+function dump_highlight($variable)
+{
+    // Convertimos la variable a una cadena representativa
+    $output = "<?php\n\n\$var = ".var_export($variable, true).";\n";
+
+    // highlight_string colorea el código y lo imprime directamente
+    highlight_string($output);
+}
 
 // INITS
 // ================================================================================
@@ -150,7 +158,8 @@ $router->resolve($uri);
 // --- ACTIONS ---
 // ================================================================================
 
-function actionStatusCheck(){
+function actionStatusCheck()
+{
     global $statusFile;
 
     header('Content-Type: application/json');
@@ -267,6 +276,27 @@ function validateSecurity()
     }
 }
 
+function validateInstructions($tasks)
+{
+    if (! is_array($tasks)) {
+        return 'Invalid instructions format: expected an array of tasks.';
+    }
+
+    foreach ($tasks as $index => $task) {
+        if (! is_array($task)) {
+            return "Invalid Instructions format";
+        }
+
+        if (! isset($task['run']) || empty($task['run'])) {
+            $name = $task['name'] ?? 'Task #'.($index + 1);
+
+            return "Task '{$name}' is missing a 'run' command.";
+        }
+    }
+
+    return true;
+}
+
 function executeDeployment()
 {
     global $config, $statusFile;
@@ -299,8 +329,38 @@ function executeDeployment()
     $logPath = $config['logs_path'].'/'.$logFilename;
     if (! file_exists($config['instructions']))
         exit('Instruction file missing.');
+
     $jsonContent = file_get_contents($config['instructions']);
+    // Validate if the instructions file has valid JSON and a valid format:
     $tasks = json_decode($jsonContent, true);
+    if (is_null($tasks)) {
+        sendTelegram(
+            buildReport(
+                $_SERVER['HTTP_HOST'] ?? 'localhost',
+                false,
+                0,
+                '',
+                '',
+                'Deployment started. Processing instructions...',
+            ),
+        );
+        exit('Invalid JSON in instructions file.');
+    }
+    $errInstructions = validateInstructions($tasks);
+    if ($errInstructions !== true) {
+        sendTelegram(
+            buildReport(
+                $_SERVER['HTTP_HOST'] ?? 'localhost',
+                false,
+                0,
+                '',
+                '',
+                "Deployment started. Error in instructions: $errInstructions",
+            ),
+        );
+        exit($errInstructions);
+    }
+
     if (json_last_error() !== JSON_ERROR_NONE)
         exit('Invalid JSON in instructions file.');
 
@@ -316,14 +376,13 @@ function executeDeployment()
     $failedTask = '';
     $fullLog = 'START: '.date('Y-m-d H:i:s')."\n";
 
-
     $taskStatus = array_fill(0, count($tasks), ['status' => 'pending', 'name' => '']);
     foreach ($tasks as $i => $t) {
         $taskStatus[$i]['name'] = $t['name'] ?? 'Task '.($i + 1);
     }
 
     foreach ($tasks as $index => $task) {
-        $taskStatus[$index]['status'] = 'running'; 
+        $taskStatus[$index]['status'] = 'running';
 
         $name = $task['name'] ?? 'Unnamed Task';
         $cmd = $task['run'] ?? '';
@@ -401,7 +460,6 @@ function executeDeployment()
     );
     if (! isset($_GET['manual']))
         echo 'Done.';
-
 }
 
 function sendTelegram($text)
