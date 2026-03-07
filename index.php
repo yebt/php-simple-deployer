@@ -28,7 +28,12 @@ $pass = $_ENV['LOAD_PASS'] ?? null;
 $method = $_SERVER['REQUEST_METHOD'];
 
 if ($user && $pass && $method == 'GET') {
-    if (! isset($_SERVER['PHP_AUTH_USER']) || $_SERVER['PHP_AUTH_USER'] != $user || $_SERVER['PHP_AUTH_PW'] != $pass) { header('WWW-Authenticate: Basic realm="Acceso restringido"'); header('HTTP/1.0 401 Unauthorized'); echo 'Acceso denegado'; exit(); }
+    if (! isset($_SERVER['PHP_AUTH_USER']) || $_SERVER['PHP_AUTH_USER'] != $user || $_SERVER['PHP_AUTH_PW'] != $pass) {
+        header('WWW-Authenticate: Basic realm="Acceso restringido"');
+        header('HTTP/1.0 401 Unauthorized');
+        echo 'Acceso denegado';
+        exit();
+    }
 }
 
 // CONFIGS
@@ -61,7 +66,8 @@ if (! is_dir($config['logs_path'])) {
 
 // Ensure paths with realpaths
 foreach (['project_path', 'logs_path'] as $key) {
-    $config[$key] = realpath($config[$key]);
+    if (isset($config[$key]))
+        $config[$key] = realpath($config[$key]);
 }
 
 $statusFile = $config['logs_path'].'/.current_status';
