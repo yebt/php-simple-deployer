@@ -20,6 +20,20 @@ if (file_exists(__DIR__.'/.env')) {
     }
 }
 
+// LOAD AUTH
+// ================================================================================
+
+$user = $_ENV['LOAD_USER'] ?? null;
+$pass = $_ENV['LOAD_PASS'] ?? null;
+$method = $_SERVER['REQUEST_METHOD'];
+
+if ($user && $pass && $method == 'GET') {
+    if (! isset($_SERVER['PHP_AUTH_USER']) || $_SERVER['PHP_AUTH_USER'] != $user || $_SERVER['PHP_AUTH_PW'] != $pass) { header('WWW-Authenticate: Basic realm="Acceso restringido"'); header('HTTP/1.0 401 Unauthorized'); echo 'Acceso denegado'; exit(); }
+}
+
+// CONFIGS
+// ================================================================================
+
 // Configuration with Defaults
 $defaults = [
     // 'PROJECT_PATH' => [__DIR__, true],
