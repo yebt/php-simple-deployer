@@ -147,103 +147,6 @@ $method = $_SERVER['REQUEST_METHOD'];
 
 $router->resolve($uri);
 
-/*
-switch ($uri) {
-    case '/status/check':
-        header('Content-Type: application/json');
-        if (! file_exists($statusFile)) {
-            echo json_encode(['finished' => true]);
-        } else {
-            $data = json_decode(file_get_contents($statusFile), true);
-            echo json_encode(['finished' => isset($data['finished']) && $data['finished'] === true]);
-        }
-        exit();
-    case '/':
-        // redurect to health view
-        header('Location: /health');
-        break;
-    case '/health':
-        renderHealthView();
-        break;
-    case '/webhook/deploy':
-        validateSecurity();
-        $manual = isset($_GET['manual']) && $_GET['manual'] == '1';
-        if ($method !== $config['webhook_method'] && ! ($manual && $method === 'GET')) {
-            http_response_code(405);
-            exit('Method Not Allowed');
-        }
-
-        if (isset($_GET['manual']) && $_GET['manual'] == '1') {
-            // Ejecutamos el script de despliegue en segundo plano
-            // exec('php '.__FILE__.' run-deploy > /dev/null 2>&1 &');
-
-            $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
-            exec('php '.__FILE__.' run-deploy '.escapeshellarg($host).' > /dev/null 2>&1 &');
-            // wait lock file
-            usleep(500000);
-            header('Location: /health');
-            exit();
-        }
-
-        executeDeployment();
-        break;
-    case '/log/view':
-        showSpecificLog($_GET['file'] ?? '');
-        break;
-    // case '/log/rview':
-    //     showSpecificLog($_GET['file'] ?? '');
-        break;
-    case '/log/last':
-        showLastLog();
-        break;
-    case '/status/live':
-        renderLiveStatus();
-        break;
-    case '/test-notify':
-        // @mago-format-ignore-next
-        $res = sendTelegram(
-            <<<MARKDOWN
-*bold \*text*
-_italic \*text_
-__underline__
-~strikethrough~
-||spoiler||
-*bold _italic bold ~italic bold strikethrough ||italic bold strikethrough spoiler||~ __underline italic bold___ bold*
-[inline URL](http://www.example.com/)
-[inline mention of a user](tg://user?id=123456789)
-![👍](tg://emoji?id=5368324170671202286)
-![22:45 tomorrow](tg://time?unix=1647531900&format=wDT)
-![22:45 tomorrow](tg://time?unix=1647531900&format=t)
-![22:45 tomorrow](tg://time?unix=1647531900&format=r)
-![22:45 tomorrow](tg://time?unix=1647531900)
-`inline fixed-width code`
-```
-pre-formatted fixed-width code block
-```
-```python
-pre-formatted fixed-width code block written in the Python programming language
-```
->Block quotation started
->Block quotation continued
->Block quotation continued
->Block quotation continued
->The last line of the block quotation
-**>The expandable block quotation started right after the previous block quotation
->It is separated from the previous block quotation by an empty bold entity
->Expandable block quotation continued
->Hidden by default part of the expandable block quotation started
->Expandable block quotation continued
->The last line of the expandable block quotation with the expandability mark||
-MARKDOWN
-        );
-        header('Location: /health?notified='.($res ? '1' : '0'));
-        break;
-    case '/clear-history':
-        clearHistory();
-        break;
-}
-*/
-
 // --- ACTIONS ---
 // ================================================================================
 
@@ -390,10 +293,6 @@ function executeDeployment()
             exit('Deployment already in progress.');
         }
     }
-    // if (file_exists($statusFile)) {
-    //     http_response_code(409);
-    //     exit('Deployment already in progress.');
-    // }
 
     $startTime = microtime(true);
     $logFilename = 'deploy_'.date('Ymd_His').'.log';
@@ -417,8 +316,6 @@ function executeDeployment()
     $failedTask = '';
     $fullLog = 'START: '.date('Y-m-d H:i:s')."\n";
 
-    // Al inicio de executeDeployment, inicializa un array de estados
-    // $taskStatus = array_fill(0, count($tasks), 'pending');
 
     $taskStatus = array_fill(0, count($tasks), ['status' => 'pending', 'name' => '']);
     foreach ($tasks as $i => $t) {
@@ -426,8 +323,7 @@ function executeDeployment()
     }
 
     foreach ($tasks as $index => $task) {
-        // $taskStatus[$index] = 'running';
-        $taskStatus[$index]['status'] = 'running'; // Cambiamos solo el status
+        $taskStatus[$index]['status'] = 'running'; 
 
         $name = $task['name'] ?? 'Unnamed Task';
         $cmd = $task['run'] ?? '';
@@ -475,7 +371,7 @@ function executeDeployment()
     file_put_contents($logPath, $fullLog."\nEND. Duration: {$duration}s");
     // unlink($statusFile);
     file_put_contents($statusFile, json_encode([
-        'running' => false, // IMPORTANTE: Ya no está corriendo
+        'running' => false, // Is stopped
         'finished' => true,
         'success' => $success,
         'task' => $success ? 'Deployment Finished Successfully' : 'Deployment Failed',
@@ -488,10 +384,8 @@ function executeDeployment()
     ]));
 
     $protocol = isset($_SERVER['HTTPS']) ? 'https://' : 'http://';
-    // $logUrl = $protocol.$_SERVER['HTTP_HOST'].'/log/view?file='.urlencode($logFilename);
-    //
+
     $host = defined('CLI_HOST') ? CLI_HOST : $_SERVER['HTTP_HOST'] ?? 'localhost';
-    // $logUrl = "$protocol{$host}/log/view?file=".urlencode($logFilename);
     $logfileNameWithoutExt = pathinfo($logFilename, PATHINFO_FILENAME);
     $logUrl = "$protocol{$host}/log/rview/{$logfileNameWithoutExt}";
 
@@ -508,10 +402,6 @@ function executeDeployment()
     if (! isset($_GET['manual']))
         echo 'Done.';
 
-    // if (isset($_GET['manual']))
-    //     header('Location: /health?deployed='.($success ? '1' : '0'));
-    // else
-    //     echo 'Done.';
 }
 
 function sendTelegram($text)
@@ -686,7 +576,6 @@ function renderHealthView()
     $logs = glob($config['logs_path'].'/*.log');
     usort($logs, fn ($a, $b) => filemtime($b) - filemtime($a));
     $lastLogs = array_slice($logs, 0, 5);
-    $isDeploying = file_exists($statusFile);
 
     $statusData = file_exists($statusFile) ? json_decode(file_get_contents($statusFile), true) : null;
     $isActuallyRunning = $statusData && (! isset($statusData['finished']) || ! $statusData['finished']);
@@ -703,11 +592,9 @@ function renderHealthView()
             <?php if ($isActuallyRunning): ?>
                 const checkStatus = setInterval(async () => {
                     try {
-                        // Hacemos un fetch a un endpoint que nos devuelva el status breve
                         const response = await fetch('/status/check');
                         const data = await response.json();
 
-                        // Si el servidor dice que ya no corre, recargamos la página para actualizar el UI
                         if (data.finished === true) {
                             clearInterval(checkStatus);
                             window.location.reload();
@@ -841,8 +728,6 @@ function renderHealthView()
                                             <span class="mr-2 <?= $isOk ? 'text-emerald-500' : 'text-rose-500' ?>">●</span>
                                             <?= $fn ?>
                                         </td>
-
-                                        <!-- <td class="px-6 py-4 text-slate-700 dark:text-slate-400 font-mono text-xs"><?= $fn ?></td> -->
 
                                         <td class="px-6 py-4 text-slate-400 dark:text-slate-600 text-xs"><?= date(
                                             'Y-m-d H:i:s',
