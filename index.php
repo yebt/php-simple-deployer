@@ -33,7 +33,7 @@ if (file_exists(__DIR__.'/.env')) {
 
 $user = $_ENV['LOAD_USER'] ?? null;
 $pass = $_ENV['LOAD_PASS'] ?? null;
-$method = $_SERVER['REQUEST_METHOD'];
+$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 if ($user && $pass && $method == 'GET') {
     if (! isset($_SERVER['PHP_AUTH_USER']) || $_SERVER['PHP_AUTH_USER'] != $user || $_SERVER['PHP_AUTH_PW'] != $pass) {
@@ -349,6 +349,7 @@ function executeDeployment()
     $startTime = microtime(true);
     $logFilename = 'deploy_'.date('Ymd_His').'.log';
     $logPath = $config['logs_path'].'/'.$logFilename;
+    $logPathRaw = $config['logs_path'].'/'.$logFilename.'.rlog';
     if (! file_exists($config['instructions']))
         exit('Instruction file missing.');
 
@@ -397,6 +398,7 @@ function executeDeployment()
     $success = true;
     $failedTask = '';
     $fullLog = 'START: '.date('Y-m-d H:i:s')."\n";
+    $fullLogRaw = 'START: '.date('Y-m-d H:i:s')."\n";
 
     $taskStatus = array_fill(0, count($tasks), ['status' => 'pending', 'name' => '']);
     foreach ($tasks as $i => $t) {
@@ -419,11 +421,16 @@ function executeDeployment()
         ]));
 
         $fullLog .= "\n[TASK]: $name\n[CMD]: $cmd\n";
+        $fullLogRaw .= "[" . date('Y-m-d H:i:s') . "] $cmd\n";
+
         $process = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
         $stdout = stream_get_contents($pipes[1]);
         $stderr = stream_get_contents($pipes[2]);
         $exitCode = proc_close($process);
+
         $fullLog .= "STDOUT: $stdout\nSTDERR: $stderr\nEXIT: $exitCode\n";
+        $fullLogRaw .= "$stdout";
+
         if ($exitCode !== 0) {
             $success = false;
             $failedTask = $name;
@@ -449,7 +456,10 @@ function executeDeployment()
         }
     }
     $duration = round(microtime(true) - $startTime, 2);
+
     file_put_contents($logPath, $fullLog."\nEND. Duration: {$duration}s");
+    file_put_contents($logPathRaw, $fullLogRaw."\nEND. Duration: {$duration}s");
+
     // unlink($statusFile);
     file_put_contents($statusFile, json_encode([
         'running' => false, // Is stopped
