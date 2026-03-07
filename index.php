@@ -437,6 +437,7 @@ function executeDeployment()
             'start' => $startTime,
             'history' => $taskStatus,
         ]));
+
         $fullLog .= "\n[TASK]: $name\n[CMD]: $cmd\n";
         $process = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
         $stdout = stream_get_contents($pipes[1]);
@@ -463,6 +464,7 @@ function executeDeployment()
                 'total' => count($tasks),
                 'history' => $taskStatus,
             ]));
+            $errorOutput = $stderr ?: $stdout;
             break;
         }
     }
@@ -490,7 +492,16 @@ function executeDeployment()
     $logfileNameWithoutExt = pathinfo($logFilename, PATHINFO_FILENAME);
     $logUrl = "$protocol{$host}/log/rview/{$logfileNameWithoutExt}";
 
-    sendTelegram(buildReport($host, $success, $duration, $logUrl, $failedTask ?? ''));
+    sendTelegram(
+        buildReport(
+            $host,
+            $success,
+            $duration,
+            $logUrl,
+            $failedTask ?? '',
+            $errorOutput ?? '',
+        ),
+    );
     if (! isset($_GET['manual']))
         echo 'Done.';
 
@@ -542,23 +553,46 @@ function sendTelegram($text)
     return true;
 }
 
-function buildReport($appName, $success, $duration, $logUrl, $failedTask = '')
+function prugueStrData($str)
+{
+    return str_replace(
+        ['\\', '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'],
+        [
+            '\\\\',
+            '\\_',
+            '\\*',
+            '\\[',
+            '\\]',
+            '\\(',
+            '\\)',
+            '\\~',
+            '\\`',
+            '\\>',
+            '\\#',
+            '\\+',
+            '\\-',
+            '\\=',
+            '\\|',
+            '\\{',
+            '\\}',
+            '\\.',
+            '\\!',
+        ],
+        $str,
+    );
+}
+
+function buildReport($appName, $success, $duration, $logUrl, $failedTask = '', $errorOutput = '')
 {
     $emoji = $success ? '✅' : '❌';
     // decode $failedTask for markdown special characters
-    $failedTask = $failedTask ? str_replace(
-        ['\\', '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'],
-        ['\\\\', '\\_', '\\*', '\\[', '\\]', '\\(', '\\)', '\\~', '\\`', '\\>', '\\#', '\\+', '\\-', '\\=', '\\|', '\\{', '\\}', '\\.', '\\!'],
-        $failedTask,
-    ) : '';
+    if (! empty($failedTask)) {
+        $failedTask = prugueStrData($failedTask);
+    }
+    if (! empty($errorOutput)) {
+        $errorOutput = "\n*Error Output:*\n```\n".prugueStrData($errorOutput)."\n```";
+    }
     $status = $success ? 'SUCCESS' : "FAILED at $failedTask";
-
-    // The characters to be escaped in most contexts are:
-    // _, *, [, ], (, ), ~, `, >, #, +, -, =, |, {, }, ., !.
-    // *SPHPD: $emoji $appName*
-    // *Status:* _{$status}_
-    // *Duration:* _{$duration}s_
-    // *Log:* [View Details]($logUrl)
 
     $duration = str_replace('.', '\.', $duration.'');
 
@@ -569,6 +603,7 @@ function buildReport($appName, $success, $duration, $logUrl, $failedTask = '')
 *Status:* _{$status}_
 *Duration:* _{$duration}s_
 *Log:* [View Details]($logUrl)
+$errorOutput
 MARKDOWN;
 }
 
