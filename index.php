@@ -405,56 +405,69 @@ function executeDeployment()
         $taskStatus[$i]['name'] = $t['name'] ?? 'Task '.($i + 1);
     }
 
-    foreach ($tasks as $index => $task) {
-        $taskStatus[$index]['status'] = 'running';
+    // foreach ($tasks as $index => $task) {
+    //     $taskStatus[$index]['status'] = 'running';
+    //
+    //     $name = $task['name'] ?? 'Unnamed Task';
+    //     $cmd = $task['run'] ?? '';
+    //
+    //     file_put_contents($statusFile, json_encode([
+    //         'running' => true,
+    //         'task' => $name,
+    //         'index' => $index + 1,
+    //         'total' => count($tasks),
+    //         'start' => $startTime,
+    //         'history' => $taskStatus,
+    //     ]));
+    //
+    //     $fullLog .= "\n[TASK]: $name\n[CMD]: $cmd\n";
+    //     $fullLogRaw .= "[" . date('Y-m-d H:i:s') . "] $cmd\n";
+    //
+    //     $process = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+    //     $stdout = stream_get_contents($pipes[1]);
+    //     $stderr = stream_get_contents($pipes[2]);
+    //     $exitCode = proc_close($process);
+    //
+    //     $fullLog .= "STDOUT: $stdout\nSTDERR: $stderr\nEXIT: $exitCode\n";
+    //     $fullLogRaw .= "$stdout";
+    //
+    //     if ($exitCode !== 0) {
+    //         $success = false;
+    //         $failedTask = $name;
+    //
+    //         // break;
+    //     }
+    //     if ($exitCode === 0) {
+    //         // $taskStatus[$index] = 'success';
+    //         $taskStatus[$index]['status'] = 'success';
+    //     } else {
+    //         // $taskStatus[$index] = 'failed';
+    //         $taskStatus[$index]['status'] = 'failed';
+    //         // Guardamos el último estado antes de salir por error
+    //         file_put_contents($statusFile, json_encode([
+    //             'running' => false, // Detener animación en live si falló
+    //             'task' => "FAILED: $name",
+    //             'index' => $index + 1,
+    //             'total' => count($tasks),
+    //             'history' => $taskStatus,
+    //         ]));
+    //         $errorOutput = $stderr ?: $stdout;
+    //         break;
+    //     }
+    // }
 
-        $name = $task['name'] ?? 'Unnamed Task';
-        $cmd = $task['run'] ?? '';
+    [$exitCode, $failedTask, $errorOutput, $index] = runTasksWithShell(
+        $tasks,
+        $fullLog,
+        $fullLogRaw,
+        $taskStatus
+    );
+    var_dump($exitCode, $failedTask, $errorOutput, $index);
+    echo "---";
+    die();
 
-        file_put_contents($statusFile, json_encode([
-            'running' => true,
-            'task' => $name,
-            'index' => $index + 1,
-            'total' => count($tasks),
-            'start' => $startTime,
-            'history' => $taskStatus,
-        ]));
+    $success = $exitCode === 0;
 
-        $fullLog .= "\n[TASK]: $name\n[CMD]: $cmd\n";
-        $fullLogRaw .= "[" . date('Y-m-d H:i:s') . "] $cmd\n";
-
-        $process = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
-        $stdout = stream_get_contents($pipes[1]);
-        $stderr = stream_get_contents($pipes[2]);
-        $exitCode = proc_close($process);
-
-        $fullLog .= "STDOUT: $stdout\nSTDERR: $stderr\nEXIT: $exitCode\n";
-        $fullLogRaw .= "$stdout";
-
-        if ($exitCode !== 0) {
-            $success = false;
-            $failedTask = $name;
-
-            // break;
-        }
-        if ($exitCode === 0) {
-            // $taskStatus[$index] = 'success';
-            $taskStatus[$index]['status'] = 'success';
-        } else {
-            // $taskStatus[$index] = 'failed';
-            $taskStatus[$index]['status'] = 'failed';
-            // Guardamos el último estado antes de salir por error
-            file_put_contents($statusFile, json_encode([
-                'running' => false, // Detener animación en live si falló
-                'task' => "FAILED: $name",
-                'index' => $index + 1,
-                'total' => count($tasks),
-                'history' => $taskStatus,
-            ]));
-            $errorOutput = $stderr ?: $stdout;
-            break;
-        }
-    }
     $duration = round(microtime(true) - $startTime, 2);
 
     file_put_contents($logPath, $fullLog."\nEND. Duration: {$duration}s");
@@ -630,6 +643,80 @@ function clearHistory()
         }
     }
     header('Location: /health?cleared=1');
+}
+
+function runTasksWithShell($tasks, &$fullLog, &$fullLogRaw, &$taskStatus)
+{
+    $descriptors = [
+        0 => ['pipe', 'r'], // stdin
+        1 => ['pipe', 'w'], // stdout
+        2 => ['pipe', 'w'], // stderr
+    ];
+
+    $process = proc_open('/bin/bash -s', $descriptors, $pipes);
+
+    if (!is_resource($process)) {
+        throw new RuntimeException("Unable to start shell");
+    }
+
+
+    foreach ($tasks as $index => $task) {
+
+        $name = $task['name'] ?? 'Unnamed Task';
+        $cmd  = $task['run'];
+
+        $taskStatus[$index]['status'] = 'running';
+
+        $fullLog .= "\n[TASK]: $name\n[CMD]: $cmd\n";
+        $fullLogRaw .= "[" . date('Y-m-d H:i:s') . "] $cmd\n";
+
+        fwrite($pipes[0], $cmd . "\n");
+        fwrite($pipes[0], "echo __EXIT_CODE:$?\n");
+
+        fflush($pipes[0]);
+
+        $stdout = '';
+        $stderr = '';
+        $exitCode = 1;
+
+        while (true) {
+
+            $line = fgets($pipes[1]);
+
+            if ($line === false) break;
+
+            if (str_starts_with($line, "__EXIT_CODE:")) {
+                $exitCode = (int) trim(str_replace("__EXIT_CODE:", "", $line));
+                break;
+            }
+
+            $stdout .= $line;
+        }
+
+        echo "DONE";
+        $stderr .= stream_get_contents($pipes[2]);
+        echo "<br>";
+
+        $fullLog .= "STDOUT: $stdout\nSTDERR: $stderr\nEXIT: $exitCode\n";
+        $fullLogRaw .= $stdout;
+
+        if ($exitCode === 0) {
+            $taskStatus[$index]['status'] = 'success';
+        } else {
+            $taskStatus[$index]['status'] = 'failed';
+            // return [$exitCode, $name, $stderr ?: $stdout];
+            return [$exitCode, $name ?? '', $stderr ?: $stdout, $index ?? 0];
+        }
+        echo "====";
+    }
+
+    fclose($pipes[0]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+
+    proc_close($process);
+
+    return [0, '', '', $index ?? 0];
 }
 
 // --- VIEWS ---
