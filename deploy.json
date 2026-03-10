@@ -1,15 +1,14 @@
 [
   {
     "name": "List files",
-    "run": "sleep 2 && ls"
+    "run": "ls"
   },
   {
-    "name": "List files with details",
-    "run": "sleep 3 && ls -la"
-  },
-  {
-    "name": "List c files with details",
-    "run": "sleep 8 && echo 'Listing c files...' && ls -la *.c"
+    "name": "Build",
+    "run": [
+      "composer install --no-dev",
+      "php artisan migrate",
+      "php artisan config:cache"
+    ]
   }
-
 ]
