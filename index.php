@@ -28,11 +28,26 @@ if (file_exists(__DIR__.'/.env')) {
     }
 }
 
+function env($key, $default = null)
+{
+    $value = $_ENV[$key] ?? $default;
+    if (is_string($value)) {
+        $lower = strtolower($value);
+        if ($lower === 'true')
+            return true;
+        if ($lower === 'false')
+            return false;
+        if ($lower === 'null')
+            return null;
+    }
+    return $value;
+}
+
 // LOAD AUTH
 // ================================================================================
 
-$user = $_ENV['LOAD_USER'] ?? null;
-$pass = $_ENV['LOAD_PASS'] ?? null;
+$user = env('LOAD_USER') ?? null;
+$pass = env('LOAD_PASS') ?? null;
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 if ($user && $pass && $method == 'GET') {
@@ -56,16 +71,18 @@ $defaults = [
 ];
 
 $config = [
-    // 'project_path' => $_ENV['PROJECT_PATH'] ?? $defaults['PROJECT_PATH'][0],
-    'project_path' => $_ENV['PROJECT_PATH'] ?? null,
-    'instructions' => $_ENV['INSTRUCTIONS_FILE'] ?? $defaults['INSTRUCTIONS_FILE'][0],
-    'logs_path' => $_ENV['LOGS_PATH'] ?? $defaults['LOGS_PATH'][0],
-    'bot_token' => $_ENV['TELEGRAM_BOT_TOKEN'] ?? '',
-    'chat_id' => $_ENV['TELEGRAM_CHAT_ID'] ?? '',
-    'thread_id' => $_ENV['TELEGRAM_THREAD_ID'] ?? null,
-    'secure_token' => $_ENV['SECURITY_TOKEN'] ?? '',
-    'webhook_method' => $_ENV['WEBHOOK_METHOD'] ?? $defaults['WEBHOOK_METHOD'][0],
+    // 'project_path' => env('PROJECT_PATH') ?? $defaults['PROJECT_PATH'][0],
+    'project_path' => env('PROJECT_PATH') ?? null,
+    'instructions' => env('INSTRUCTIONS_FILE') ?? $defaults['INSTRUCTIONS_FILE'][0],
+    'logs_path' => env('LOGS_PATH') ?? $defaults['LOGS_PATH'][0],
+    'telegram_enabled' => env('TELEGRAM_NOTIFICATIONS') ?? true,
+    'bot_token' => env('TELEGRAM_BOT_TOKEN') ?? '',
+    'chat_id' => env('TELEGRAM_CHAT_ID') ?? '',
+    'thread_id' => env('TELEGRAM_THREAD_ID') ?? null,
+    'secure_token' => env('SECURITY_TOKEN') ?? '',
+    'webhook_method' => env('WEBHOOK_METHOD') ?? $defaults['WEBHOOK_METHOD'][0],
 ];
+
 
 // Ensure logs directory exists
 if (! is_dir($config['logs_path'])) {
@@ -140,6 +157,7 @@ $router->add('/webhook/deploy', 'actionWebhookDeploy');
 $router->add('/webhook/deploy/nowait', 'actionWebhookDeployNoWait');
 $router->add('/log/view', 'actionLogView');
 $router->add('/log/rview/([a-zA-Z0-9_]+)', 'actionLogRawView');
+$router->add('/log/bview/([a-zA-Z0-9_]+)', 'actionLogBaseRawView');
 $router->add('/log/last', 'actionLogLast');
 $router->add('/status/live', 'actionStatusLive');
 $router->add('/test-notify', 'actionNotifyTest');
@@ -237,6 +255,12 @@ function actionLogView()
     showSpecificLog($_GET['file'] ?? '');
 }
 
+function actionLogBaseRawView($id)
+{
+    $file = $id.'.log.rlog';
+    showSpecificLog($file);
+}
+
 function actionLogRawView($id)
 {
     $file = $id.'.log';
@@ -265,7 +289,7 @@ function actionNotifyTest()
     // @mago-format-ignore-next
     $res = sendTelegram(
     <<<MARKDOWN
-🚀 *System Check: SPHPD*
+🧪 *System Check: SPHPD*
 
 *Host:* `$server`
 *Status:* `Operational`
@@ -311,7 +335,7 @@ function validateInstructions($tasks)
             return 'Invalid Instructions format';
         }
 
-        if (! isset($task['run']) || (empty($task['run']) && $task['run'] !== '0' && $task['run'] !== 0)) {
+        if (! isset($task['run']) || empty($task['run']) && $task['run'] !== '0' && $task['run'] !== 0) {
             $name = $task['name'] ?? 'Task #'.($index + 1);
 
             return "Task '{$name}' is missing a 'run' command.";
@@ -433,18 +457,26 @@ function executeDeployment()
         $errorOutput = '';
 
         foreach ($commands as $cmd) {
+            // Separators
+            $fullLog .= "\n---------------------------------------------\n";
+            $fullLogRaw .= "\n---------------------------------------------\n";
+
             $fullLog .= "[CMD]: $cmd\n";
             $fullLogRaw .= '['.date('Y-m-d H:i:s')."] $cmd\n";
 
-            $process = proc_open($cmd, [
-                0 => ['pipe', 'r'],
-                1 => ['pipe', 'w'],
-                2 => ['pipe', 'w'],
-            ], $pipes);
+            $process = proc_open(
+                $cmd,
+                [
+                    0 => ['pipe', 'r'],
+                    1 => ['pipe', 'w'],
+                    2 => ['pipe', 'w'],
+                ],
+                $pipes,
+            );
 
             if (is_resource($process)) {
                 fclose($pipes[0]); // We don't need stdin
-                
+
                 $cmdStdout = '';
                 $cmdStderr = '';
 
@@ -472,7 +504,7 @@ function executeDeployment()
                     }
 
                     $status = proc_get_status($process);
-                    if (!$status['running'] && $res === 0) {
+                    if (! $status['running'] && $res === 0) {
                         break;
                     }
                 }
@@ -555,6 +587,10 @@ function executeDeployment()
 function sendTelegram($text)
 {
     global $config;
+
+    if (! $config['telegram_enabled'])
+        return false;
+
     $botTkn = $config['bot_token'] ?? '';
     if (empty($botTkn))
         return false;
