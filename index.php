@@ -40,6 +40,7 @@ function env($key, $default = null)
         if ($lower === 'null')
             return null;
     }
+
     return $value;
 }
 
@@ -82,7 +83,6 @@ $config = [
     'secure_token' => env('SECURITY_TOKEN') ?? '',
     'webhook_method' => env('WEBHOOK_METHOD') ?? $defaults['WEBHOOK_METHOD'][0],
 ];
-
 
 // Ensure logs directory exists
 if (! is_dir($config['logs_path'])) {
@@ -452,15 +452,14 @@ function executeDeployment()
             'history' => $taskStatus,
         ]));
 
+        // Separators
+        $fullLog .= "\n---------------------------------------------\n";
+        $fullLogRaw .= "\n---------------------------------------------\n";
         $fullLog .= "\n[TASK]: $name\n";
         $taskSuccess = true;
         $errorOutput = '';
 
         foreach ($commands as $cmd) {
-            // Separators
-            $fullLog .= "\n---------------------------------------------\n";
-            $fullLogRaw .= "\n---------------------------------------------\n";
-
             $fullLog .= "[CMD]: $cmd\n";
             $fullLogRaw .= '['.date('Y-m-d H:i:s')."] $cmd\n";
 
