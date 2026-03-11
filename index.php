@@ -213,7 +213,7 @@ function actionWebhookDeployNoWait()
 {
     global $config, $method;
     validateSecurity();
-    if ($method !== $config['webhook_method'] ) {
+    if ($method !== $config['webhook_method']) {
         http_response_code(405);
         exit('Method Not Allowed');
     }
@@ -222,12 +222,14 @@ function actionWebhookDeployNoWait()
     exec('php '.__FILE__.' run-deploy '.escapeshellarg($host).' > /dev/null 2>&1 &');
 
     // set header json
-    http_response_code(202); 
+    http_response_code(202);
     header('Content-Type: application/json');
-    echo json_encode([
-        'status' => 'accepted',
-        'message' => 'Deployment initiated in background',
-    ]);
+    echo
+        json_encode([
+            'status' => 'accepted',
+            'message' => 'Deployment initiated in background',
+        ])
+    ;
 }
 
 function actionLogView()
@@ -306,7 +308,7 @@ function validateInstructions($tasks)
 
     foreach ($tasks as $index => $task) {
         if (! is_array($task)) {
-            return "Invalid Instructions format";
+            return 'Invalid Instructions format';
         }
 
         if (! isset($task['run']) || empty($task['run'])) {
@@ -421,7 +423,7 @@ function executeDeployment()
         ]));
 
         $fullLog .= "\n[TASK]: $name\n[CMD]: $cmd\n";
-        $fullLogRaw .= "[" . date('Y-m-d H:i:s') . "] $cmd\n";
+        $fullLogRaw .= '['.date('Y-m-d H:i:s')."] $cmd\n";
 
         $process = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
         $stdout = stream_get_contents($pipes[1]);
