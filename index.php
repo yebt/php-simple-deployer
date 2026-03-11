@@ -436,12 +436,15 @@ function executeDeployment()
             $fullLog .= "[CMD]: $cmd\n";
             $fullLogRaw .= '['.date('Y-m-d H:i:s')."] $cmd\n";
 
-            $process = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+            $process = proc_open($cmd, [
+                0 => ['pipe', 'r'],
+                1 => ['pipe', 'w'],
+                2 => ['pipe', 'w'],
+            ], $pipes);
 
             if (is_resource($process)) {
-                stream_set_blocking($pipes[1], 0);
-                stream_set_blocking($pipes[2], 0);
-
+                fclose($pipes[0]); // We don't need stdin
+                
                 $cmdStdout = '';
                 $cmdStderr = '';
 
@@ -450,9 +453,11 @@ function executeDeployment()
                     $write = null;
                     $except = null;
 
-                    if (stream_select($read, $write, $except, 1) > 0) {
+                    $res = stream_select($read, $write, $except, 1);
+
+                    if ($res > 0) {
                         foreach ($read as $pipe) {
-                            $content = fread($pipe, 4096);
+                            $content = fread($pipe, 8192);
                             if ($pipe === $pipes[1]) {
                                 $cmdStdout .= $content;
                                 $fullLogRaw .= $content;
@@ -462,17 +467,15 @@ function executeDeployment()
                         }
                     }
 
+                    if (feof($pipes[1]) && feof($pipes[2])) {
+                        break;
+                    }
+
                     $status = proc_get_status($process);
-                    if (! $status['running']) {
+                    if (!$status['running'] && $res === 0) {
                         break;
                     }
                 }
-
-                $remainingStdout = stream_get_contents($pipes[1]);
-                $cmdStdout .= $remainingStdout;
-                $fullLogRaw .= $remainingStdout;
-
-                $cmdStderr .= stream_get_contents($pipes[2]);
 
                 fclose($pipes[1]);
                 fclose($pipes[2]);
