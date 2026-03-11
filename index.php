@@ -311,10 +311,16 @@ function validateInstructions($tasks)
             return 'Invalid Instructions format';
         }
 
-        if (! isset($task['run']) || empty($task['run'])) {
+        if (! isset($task['run']) || (empty($task['run']) && $task['run'] !== '0' && $task['run'] !== 0)) {
             $name = $task['name'] ?? 'Task #'.($index + 1);
 
             return "Task '{$name}' is missing a 'run' command.";
+        }
+
+        if (! is_string($task['run']) && ! is_array($task['run'])) {
+            $name = $task['name'] ?? 'Task #'.($index + 1);
+
+            return "Task '{$name}' 'run' must be a string or an array.";
         }
     }
 
@@ -411,7 +417,7 @@ function executeDeployment()
         $taskStatus[$index]['status'] = 'running';
 
         $name = $task['name'] ?? 'Unnamed Task';
-        $cmd = $task['run'] ?? '';
+        $commands = is_array($task['run']) ? $task['run'] : [$task['run']];
 
         file_put_contents($statusFile, json_encode([
             'running' => true,
@@ -422,28 +428,76 @@ function executeDeployment()
             'history' => $taskStatus,
         ]));
 
-        $fullLog .= "\n[TASK]: $name\n[CMD]: $cmd\n";
-        $fullLogRaw .= '['.date('Y-m-d H:i:s')."] $cmd\n";
+        $fullLog .= "\n[TASK]: $name\n";
+        $taskSuccess = true;
+        $errorOutput = '';
 
-        $process = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
-        $stdout = stream_get_contents($pipes[1]);
-        $stderr = stream_get_contents($pipes[2]);
-        $exitCode = proc_close($process);
+        foreach ($commands as $cmd) {
+            $fullLog .= "[CMD]: $cmd\n";
+            $fullLogRaw .= '['.date('Y-m-d H:i:s')."] $cmd\n";
 
-        $fullLog .= "STDOUT: $stdout\nSTDERR: $stderr\nEXIT: $exitCode\n";
-        $fullLogRaw .= "$stdout";
+            $process = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
 
-        if ($exitCode !== 0) {
-            $success = false;
-            $failedTask = $name;
+            if (is_resource($process)) {
+                stream_set_blocking($pipes[1], 0);
+                stream_set_blocking($pipes[2], 0);
 
-            // break;
+                $cmdStdout = '';
+                $cmdStderr = '';
+
+                while (true) {
+                    $read = [$pipes[1], $pipes[2]];
+                    $write = null;
+                    $except = null;
+
+                    if (stream_select($read, $write, $except, 1) > 0) {
+                        foreach ($read as $pipe) {
+                            $content = fread($pipe, 4096);
+                            if ($pipe === $pipes[1]) {
+                                $cmdStdout .= $content;
+                                $fullLogRaw .= $content;
+                            } else {
+                                $cmdStderr .= $content;
+                            }
+                        }
+                    }
+
+                    $status = proc_get_status($process);
+                    if (! $status['running']) {
+                        break;
+                    }
+                }
+
+                $remainingStdout = stream_get_contents($pipes[1]);
+                $cmdStdout .= $remainingStdout;
+                $fullLogRaw .= $remainingStdout;
+
+                $cmdStderr .= stream_get_contents($pipes[2]);
+
+                fclose($pipes[1]);
+                fclose($pipes[2]);
+                $exitCode = proc_close($process);
+
+                $fullLog .= "STDOUT: $cmdStdout\nSTDERR: $cmdStderr\nEXIT: $exitCode\n";
+
+                if ($exitCode !== 0) {
+                    $taskSuccess = false;
+                    $errorOutput = $cmdStderr ?: $cmdStdout;
+                    break;
+                }
+            } else {
+                $taskSuccess = false;
+                $errorOutput = "Failed to open process: $cmd";
+                $fullLog .= "ERROR: $errorOutput\n";
+                break;
+            }
         }
-        if ($exitCode === 0) {
-            // $taskStatus[$index] = 'success';
+
+        if ($taskSuccess) {
             $taskStatus[$index]['status'] = 'success';
         } else {
-            // $taskStatus[$index] = 'failed';
+            $success = false;
+            $failedTask = $name;
             $taskStatus[$index]['status'] = 'failed';
             // Guardamos el último estado antes de salir por error
             file_put_contents($statusFile, json_encode([
@@ -453,7 +507,6 @@ function executeDeployment()
                 'total' => count($tasks),
                 'history' => $taskStatus,
             ]));
-            $errorOutput = $stderr ?: $stdout;
             break;
         }
     }
