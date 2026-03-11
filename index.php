@@ -884,7 +884,7 @@ function renderHealthView()
                 <div class="lg:col-span-3 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden shadow-sm dark:shadow-xl flex flex-col">
                     <div class="p-5 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-900/30">
                         <h2 class="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-widest">Recent Execution History</h2>
-                        <a href="/log/last" class="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold uppercase tracking-tighter transition">View Latest Raw</a>
+                        <a target="_blank" href="/log/last" class="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold uppercase tracking-tighter transition">View Latest Raw</a>
                     </div>
                     <div class="overflow-x-auto">
                         <table class="w-full text-left border-collapse">
@@ -898,6 +898,7 @@ function renderHealthView()
                             <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
                                 <?php foreach ($lastLogs as $logPath):
                                     $fn = basename($logPath);
+                                    $logName = pathinfo($fn, PATHINFO_FILENAME);
                                     $content = file_get_contents($logPath);
                                     // $isOk = str_contains($content, 'Status: SUCCESS');
                                     // get the penultimate line of the log
@@ -918,7 +919,8 @@ function renderHealthView()
                                             filemtime($logPath),
                                         ) ?></td>
                                         <td class="px-6 py-4 text-right">
-                                            <a href="/log/view?file=<?= urlencode($fn) ?>" class="text-blue-600 dark:text-blue-500 hover:underline font-bold text-xs transition">OPEN</a>
+                                            <a target="_blank" href="/log/rview/<?= urlencode($logName) ?>" class="text-blue-600 dark:text-blue-500 hover:underline font-bold text-xs transition">OPEN</a>
+                                            <a target="_blank" href="/log/bview/<?= urlencode($logName) ?>" class="text-blue-600 dark:text-blue-500 hover:underline font-bold text-xs transition">RAW</a>
                                         </td>
                                     </tr>
                                 <?php endforeach;
