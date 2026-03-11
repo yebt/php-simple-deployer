@@ -1,6 +1,10 @@
 {
     "scripts": {
-        "mango": "vendor/bin/mago"
+        "mago": "vendor/bin/mago",
+        "start": [
+            "Composer\\Config::disableProcessTimeout",
+            "php -S localhost:5173"
+        ]
     },
     "require-dev": {
         "carthage-software/mago": "^1.13.3"
