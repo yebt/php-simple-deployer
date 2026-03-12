@@ -5,14 +5,15 @@
  * Minimalist Technical UI - PHP 8.5+
  * Format: JSON Instructions
  */
-function dump_highlight($variable)
-{
-    // Convertimos la variable a una cadena representativa
-    $output = "<?php\n\n\$var = ".var_export($variable, true).";\n";
 
-    // highlight_string colorea el código y lo imprime directamente
-    highlight_string($output);
-}
+// function dump_highlight($variable)
+// {
+//     // Convertimos la variable a una cadena representativa
+//     $output = "<?php\n\n\$var = ".var_export($variable, true).";\n";
+//
+//     // highlight_string colorea el código y lo imprime directamente
+//     highlight_string($output);
+// }
 
 // INITS
 // ================================================================================
