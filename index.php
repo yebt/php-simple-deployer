@@ -581,6 +581,7 @@ function executeDeployment()
             break;
         }
     }
+    // ================================================================================
     $duration = round(microtime(true) - $startTime, 2);
 
     file_put_contents($logPath, $fullLog."\nEND. Duration: {$duration}s");
@@ -673,12 +674,13 @@ function executeDeploymentWithSingleShellProccess()
 
     $logFilePath = $config['logs_path'].'/'.$logFileName;
     $logFilePathRaw = $config['logs_path'].'/'.$logFileName.'.rlog';
+    $logFIlePathHTML = $config['logs_path'].'/'.$logFileName.'.html';
 
     // Get tasks in the instructions file
     $jsonContent = file_get_contents($config['instructions']);
     $tasks = json_decode($jsonContent, true);
 
-    runTasks($logFilePath, $logFilePathRaw, $tasks);
+    runTasks($logFilePath, $logFilePathRaw, $logFIlePathHTML, $tasks);
 }
 
 // function runTasks(
@@ -855,9 +857,28 @@ function executeDeploymentWithSingleShellProccess()
 //     dump_highlight($process);
 // }
 
+function createLogHtml($title, $bodyContent)
+{
+    // @mago-format-ignore-next
+    return <<<HTML
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>$title</title>
+    </head>
+    <body>
+        $bodyContent
+    </body>
+</html>
+HTML;
+}
+
 function runTasks(
     string $lofgilePath,
     string $logFilePathRaw,
+    string $logFilePathHTML,
     array $tasks,
 ) {
     global $statusFile, $config;
@@ -865,12 +886,15 @@ function runTasks(
     // Setup log files
     $startTime = microtime(true);
 
+    //stes
+    $totalTaks = count($tasks);
+
     // Init status file for live view
     file_put_contents($statusFile, json_encode([
         'running' => true,
         'task' => 'Starting...',
         'index' => 0,
-        'total' => count($tasks),
+        'total' => $totalTaks,
         'start' => $startTime,
     ]));
 
@@ -884,11 +908,12 @@ function runTasks(
     $failedTask = '';
     $fullLog = 'START: '.date('Y-m-d H:i:s')."\n";
     $fullLogRaw = 'START: '.date('Y-m-d H:i:s')."\n";
+    $htmlLogContent = '<h1>Deployment Log - Started at '.date('Y-m-d H:i:s')."</h1>\n";
 
     // Init the statusfile with pending status for all tasks
     $taskStatus = [];
     foreach ($tasks as $i => $t) {
-        $taskStatus[$i]['name'] = [
+        $taskStatus[$i] = [
             'name' => $t['name'] ?? 'Task '.($i + 1),
             'status' => 'pending',
         ];
@@ -901,130 +926,215 @@ function runTasks(
         2 => ['pipe', 'w'], // stderr
     ];
     // start process shell
-    $process = proc_open('stdbuf -o0 -e0 bash', $descriptor, $pipes);
+    $process = proc_open(
+        'stdbuf -o0 -e0 bash',
+        $descriptor,
+        $pipes,
+        realpath($cmdsCWD),
+    );
     if (! is_resource($process)) {
+        file_put_contents($lofgilePath, "ERROR: Failed to start shell process\n", FILE_APPEND);
+        file_put_contents($logFilePathRaw, "ERROR: Failed to start shell process\n", FILE_APPEND);
         die('Failed to start shell process');
     }
 
+    // Set non-blocking mode for stdout and stderr
     stream_set_blocking($pipes[1], false);
     stream_set_blocking($pipes[2], false);
 
-    // Internal function
-    function run($pipes, $cmd)
-    {
-        fwrite($pipes[0], $cmd."\n");
+    // Example of the commands
+    // $tasksToExecute = [
+    //     [
+    //         'name' => 'Print working directory',
+    //         'run' => 'pwd',
+    //     ],
+    //     [
+    //         'name' => 'Init environment',
+    //         'run' => 'NODE_ENV=production',
+    //     ],
+    //     [
+    //         'name' => 'List current directory',
+    //         'run' => 'ls -la',
+    //     ],
+    //     [
+    //         'name' => 'Show current user',
+    //         'run' => 'whoami',
+    //     ],
+    //     [
+    //         'name' => 'Show system info',
+    //         'run' => 'uname -a',
+    //     ],
+    //     [
+    //         'name' => 'List C files',
+    //         'run' => 'ls -la *.c',
+    //     ],
+    // ];
 
-        $out = stream_get_contents($pipes[1], false);
-        $err = stream_get_contents($pipes[2], false);
-
-        return [$out, $err];
-    }
-
-    $commands = [
-        'echo START',
-        'pwd',
-        'ls -la',
-        'whoami',
-        'uname -a',
-        'echo DONE',
-        'ls -la *.c',
-    ];
-
-    foreach ($commands as $cmd) {
+    foreach ($tasks as $indx => $task) {
+        // Total outputs
+        // NOTE: supressit
         $stdout = '';
         $stderr = '';
-        echo ">>> Ejecutando: $cmd<br>";
 
-        // __STDOUT_EOF__ y __STDERR_EOF__ se imprimen al finalizar
-        $wrapped = sprintf(
-            "%s ; __exit__=$? ; echo __STDOUT_EOF__\$__exit__ ; echo __STDERR_EOF__\$__exit__ >&2\n",
-            $cmd,
-        );
-        fwrite($pipes[0], $wrapped);
+        // update in task to running state
+        $taskStatus[$indx]['status'] = 'running';
+        $taskToRunCommands = $task['run'];
+        $taskToRunName = $task['name'] ?? 'Task #'.($indx + 1);
+        $commandsToRun = is_array($taskToRunCommands) ? $taskToRunCommands : [$taskToRunCommands];
 
-        $stdoutDone = false;
-        $stderrDone = false;
-        $exitCode = 0;
+        // Update staus file for live view
+        file_put_contents($statusFile, json_encode([
+            'running' => true,
+            'task' => $taskToRunName,
+            'index' => $indx + 1,
+            'total' => $totalTaks,
+            'start' => $startTime,
+            'history' => $taskStatus,
+        ]));
 
-        // fwrite($pipes[0], $cmd."\n");
+        // Put separators
+        $fullLog .= "\n+---------------------------------------------+\n";
+        $fullLogRaw .= "\n+---------------------------------------------+\n";
+        $htmlLogContent .= '<hr>';
+        $fullLog .= "[TASK]: $taskToRunName";
+        $htmlLogContent .= "<h2>$taskToRunName</h2>\n";
 
-        echo "Output:<br><pre style='background:#f0f0f0;padding:10px;border-radius:5px;'>";
-        while (!$stdoutDone || !$stderrDone) {
-            $read = array_filter([$pipes[1], $pipes[2]]);
-            $write = null;
-            $except = null;
+        $taskSuccess = true;
+        $errorOutput = '';
 
-            if (stream_select($read, $write, $except, 5) === false) {
-                break;
-            }
+        foreach ($commandsToRun as $cmd) {
+            $fullLog .= "\n[CMD]: $cmd\n";
+            $fullLogRaw .= '['.date('Y-m-d H:i:s')."] $cmd\n";
+            $htmlLogContent .= "<h3>Command: $cmd</h3>\n";
+            // $htmlLogContent .= "<pre style='background:#f0f0f0;padding:10px;border-radius:5px;'><code>$cmd</code></pre>\n";
 
-            // foreach ($read as $r) {
-            //     $data = fread($r, 8192);
-            //
-            //     if ($data !== false && strlen($data) > 0) {
-            //         if ($r === $pipes[1]) {
-            //             echo '[OUT] '.$data;
-            //         }
-            //
-            //         if ($r === $pipes[2]) {
-            //             echo '[ERR] '.$data;
-            //         }
-            //     }
-            //
-            //     if ($data !== false && strlen($data) > 0) {
-            //         echo $data;
-            //     }
-            // }
+            // __STDOUT_EOF__ y __STDERR_EOF__ print to finish
+            $wrapped = sprintf(
+                "%s ; __exit__=$? ; echo __STDOUT_EOF__\$__exit__ ; echo __STDERR_EOF__\$__exit__ >&2\n",
+                $cmd,
+            );
+            fwrite($pipes[0], $wrapped); // Send command to shell
 
-            // pequeña pausa para evitar loop agresivo
-            // usleep(100000);
-            //
-            // // verificamos si ya no hay más salida momentáneamente
-            // $status = proc_get_status($process);
-            // if (! $status['running']) {
-            //     $running = false;
-            // }
-            //
-            // // si no hay más datos en buffers
-            // if (feof($pipes[1]) && feof($pipes[2])) {
-            //     $running = false;
-            // }
-            //
-            // // romper loop cuando no hay actividad
-            // if (
-            //     stream_get_meta_data($pipes[1])['unread_bytes'] == 0
-            //     && stream_get_meta_data($pipes[2])['unread_bytes'] == 0
-            // ) {
-            //     break;
-            // }
+            $stdoutDone = false;
+            $stderrDone = false;
+            $exitCode = 0; // Success by default
 
-            foreach ($read as $stream) {
-                $line = fgets($stream);
-                if ($line === false) continue;
+            // echo "Output:<br><pre style='background:#f0f0f0;padding:10px;border-radius:5px;'>";
+            $htmlLogContent .= "<pre style='background:#f0f0f0;padding:10px;border-radius:5px;'><code>";
+            while (! $stdoutDone || ! $stderrDone) {
+                $read = array_filter([$pipes[1], $pipes[2]]);
+                $write = null;
+                $except = null;
 
-                if ($stream === $pipes[1]) {
-                    if (preg_match('/^__STDOUT_EOF__(\d+)/', $line, $m)) {
-                        $exitCode   = (int) $m[1];
-                        $stdoutDone = true;
+                if (stream_select($read, $write, $except, 5) === false) {
+                    break;
+                }
+
+                foreach ($read as $stream) {
+                    $line = fgets($stream);
+                    if ($line === false)
+                        continue;
+
+                    if ($stream === $pipes[1]) {
+                        if (preg_match('/^__STDOUT_EOF__(\d+)/', $line, $m)) {
+                            $exitCode = (int) $m[1];
+                            $stdoutDone = true;
+                        } else {
+                            $stdout .= $line;
+                            $fullLogRaw .= '['.date('Y-m-d H:i:s')."][info  ] $line";
+
+                            // echo '[OUT] '.$line;
+                            // if ($onOutput) $onOutput('stdout', rtrim($line), $cmd);
+                        }
                     } else {
-                        $stdout .= $line;
-                        echo '[OUT] '.$line;
-                        // if ($onOutput) $onOutput('stdout', rtrim($line), $cmd);
-                    }
-                } else {
-                    if (preg_match('/^__STDERR_EOF__(\d+)/', $line, $m)) {
-                        $stderrDone = true;
-                    } else {
-                        $stderr .= $line;
-                        echo '[ERR] '.$line;
-                        // if ($onOutput) $onOutput('stderr', rtrim($line), $cmd);
+                        if (preg_match('/^__STDERR_EOF__(\d+)/', $line, $m)) {
+                            $stderrDone = true;
+                        } else {
+                            $stderr .= $line;
+                            $fullLogRaw .= '['.date('Y-m-d H:i:s')."][error ] $line";
+
+                            // echo '[ERR] '.$line;
+                            // if ($onOutput) $onOutput('stderr', rtrim($line), $cmd);
+                        }
                     }
                 }
             }
+
+            $htmlLogContent .= "</code></pre>\n";
+            $fullLog .= "STDOUT: $stdout\nSTDERR: $stderr\nEXIT: $exitCode\n";
+
+            if ($exitCode !== 0) {
+                $taskSuccess = false;
+                $errorOutput = $stderr ?: $stdout;
+                break;
+            }
         }
-        echo '</pre><br>';
+
+        if ($taskSuccess) {
+            $taskStatus[$indx]['status'] = 'success';
+        } else {
+            $success = false;
+            $failedTask = $taskToRunName;
+            $taskStatus[$indx]['status'] = 'failed';
+            // Guardamos el último estado antes de salir por error
+            file_put_contents($statusFile, json_encode([
+                'running' => false, // Detener animación en live si falló
+                'task' => "FAILED: $taskToRunName",
+                'index' => $indx + 1,
+                'total' => $totalTaks,
+                'history' => $taskStatus,
+            ]));
+            break;
+        }
     }
-    dump_highlight($process);
+
+    // ================================================================================
+
+    $fullLog .= "\n=============================================\n";
+    $fullLogRaw .= "\n=============================================\n";
+
+    $duration = round(microtime(true) - $startTime, 2);
+
+    $htmlLogContent .= "<h2>Deployment finished in {$duration}s</h2>\n";
+    $htmlLogContent .= '<p><strong>Overall Status: '.($success ? 'SUCCESS' : "FAILED at $failedTask")."</strong></p>\n";
+
+    // Update logs after each task
+    file_put_contents($lofgilePath, $fullLog."\nEND. Duration: {$duration}s");
+    file_put_contents($logFilePathRaw, $fullLogRaw."\nEND. Duration: {$duration}s");
+    file_put_contents($logFilePathHTML, createLogHtml("Deployment Log - $taskToRunName", $htmlLogContent));
+
+    // Update status
+    file_put_contents($statusFile, json_encode([
+        'running' => true,
+        'finished' => true,
+        '$success' => $taskSuccess,
+        'task' => $taskSuccess ? 'Deployment Finished Successfully' : 'Deployment Failed',
+        'index' => $indx + 1,
+        'total' => $totalTaks,
+        'start' => $startTime,
+        'duration' => $duration,
+        'history' => $taskStatus,
+        'log_file' => basename($lofgilePath),
+    ]));
+
+    $protocol = isset($_SERVER['HTTPS']) ? 'https://' : 'http://';
+    $host = defined('CLI_HOST') ? CLI_HOST : $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $logFileNameWithoutExt = pathinfo($lofgilePath, PATHINFO_FILENAME);
+    $logUrl = "$protocol{$host}/log/rview/{$logFileNameWithoutExt}";
+
+    sendTelegram(
+        buildReport(
+            $host,
+            $taskSuccess,
+            $duration,
+            $logUrl,
+            $taskToRunName,
+            $errorOutput,
+        ),
+    );
+
+    if (! isset($_GET['manual']))
+        echo 'Done.';
 }
 
 function sendTelegram($text)
@@ -1313,6 +1423,13 @@ function renderHealthView()
 
                             <?php endif; ?>
 
+                            <?php if (env('MODE', 'production') !== 'production'): ?>
+                                <a href="/debugdeploy" 
+                                    target="_blank"
+                                    onclick="return confirm('Debug deployment?')"
+                                    class="block w-full text-center bg-amber-800 dark:bg-amber-800 text-white py-2 rounded text-xs font-bold hover:bg-amber-700 dark:hover:bg-amber-700 transition">DEBUG DEPLOYMENT</a>
+                            <?php endif; ?>
+
                             <?php if (isset($statusData['finished'])): ?>
                                 <a href="/status/live" class="block w-full text-center border border-emerald-500/30 text-emerald-500 py-2 rounded text-[10px] font-bold hover:bg-emerald-500/5 transition uppercase">
                                     View Last Result
@@ -1431,6 +1548,7 @@ function renderLiveStatus()
                 <?php foreach ($data['history'] as $i => $item):
                     $status = $item['status'];
                     $name = $item['name'];
+                    var_dump($item);
 
                     // Definición de estilos por estado
                     $badgeClass = match ($status) {
