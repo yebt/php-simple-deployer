@@ -28,14 +28,30 @@ if (file_exists(__DIR__.'/.env')) {
     }
 }
 
+function env($key, $default = null)
+{
+    $value = $_ENV[$key] ?? $default;
+    if (is_string($value)) {
+        $lower = strtolower($value);
+        if ($lower === 'true')
+            return true;
+        if ($lower === 'false')
+            return false;
+        if ($lower === 'null')
+            return null;
+    }
+
+    return $value;
+}
+
 // LOAD AUTH
 // ================================================================================
 
-$user = $_ENV['LOAD_USER'] ?? null;
-$pass = $_ENV['LOAD_PASS'] ?? null;
+$user = env('LOAD_USER') ?? null;
+$pass = env('LOAD_PASS') ?? null;
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
-if ($user && $pass && $method == 'GET') {
+if ($user && $pass && ($method == 'GET' || $method == 'POST')) {
     if (! isset($_SERVER['PHP_AUTH_USER']) || $_SERVER['PHP_AUTH_USER'] != $user || $_SERVER['PHP_AUTH_PW'] != $pass) {
         header('WWW-Authenticate: Basic realm="Acceso restringido"');
         header('HTTP/1.0 401 Unauthorized');
@@ -56,15 +72,16 @@ $defaults = [
 ];
 
 $config = [
-    // 'project_path' => $_ENV['PROJECT_PATH'] ?? $defaults['PROJECT_PATH'][0],
-    'project_path' => $_ENV['PROJECT_PATH'] ?? null,
-    'instructions' => $_ENV['INSTRUCTIONS_FILE'] ?? $defaults['INSTRUCTIONS_FILE'][0],
-    'logs_path' => $_ENV['LOGS_PATH'] ?? $defaults['LOGS_PATH'][0],
-    'bot_token' => $_ENV['TELEGRAM_BOT_TOKEN'] ?? '',
-    'chat_id' => $_ENV['TELEGRAM_CHAT_ID'] ?? '',
-    'thread_id' => $_ENV['TELEGRAM_THREAD_ID'] ?? null,
-    'secure_token' => $_ENV['SECURITY_TOKEN'] ?? '',
-    'webhook_method' => $_ENV['WEBHOOK_METHOD'] ?? $defaults['WEBHOOK_METHOD'][0],
+    // 'project_path' => env('PROJECT_PATH') ?? $defaults['PROJECT_PATH'][0],
+    'project_path' => env('PROJECT_PATH') ?? null,
+    'instructions' => env('INSTRUCTIONS_FILE') ?? $defaults['INSTRUCTIONS_FILE'][0],
+    'logs_path' => env('LOGS_PATH') ?? $defaults['LOGS_PATH'][0],
+    'telegram_enabled' => env('TELEGRAM_NOTIFICATIONS') ?? true,
+    'bot_token' => env('TELEGRAM_BOT_TOKEN') ?? '',
+    'chat_id' => env('TELEGRAM_CHAT_ID') ?? '',
+    'thread_id' => env('TELEGRAM_THREAD_ID') ?? null,
+    'secure_token' => env('SECURITY_TOKEN') ?? '',
+    'webhook_method' => env('WEBHOOK_METHOD') ?? $defaults['WEBHOOK_METHOD'][0],
 ];
 
 // Ensure logs directory exists
@@ -86,7 +103,7 @@ $statusFile = $config['logs_path'].'/.current_status';
 // Execute the deployment if called from CLI with the specific argument
 if (isset($argv[1]) && $argv[1] === 'run-deploy') {
     define('CLI_HOST', $argv[2] ?? 'localhost');
-    executeDeployment();
+    executeDeploymentWithSingleShellProccess();
     exit();
 }
 
@@ -136,10 +153,17 @@ $router = new RegExpRouter;
 $router->add('/status/check', 'actionStatusCheck');
 $router->add('/', 'actionHome');
 $router->add('/health', 'actionHealthView');
+
+if (env('MODE', 'production') !== 'production') {
+    $router->add('/debugdeploy', 'actionDebugDeploy');
+}
 $router->add('/webhook/deploy', 'actionWebhookDeploy');
 $router->add('/webhook/deploy/nowait', 'actionWebhookDeployNoWait');
+
 $router->add('/log/view', 'actionLogView');
 $router->add('/log/rview/([a-zA-Z0-9_]+)', 'actionLogRawView');
+$router->add('/log/bview/([a-zA-Z0-9_]+)', 'actionLogBaseRawView');
+$router->add('/log/htmlview/([a-zA-Z0-9_]+)', 'actionLogHtmlView');
 $router->add('/log/last', 'actionLogLast');
 $router->add('/status/live', 'actionStatusLive');
 $router->add('/test-notify', 'actionNotifyTest');
@@ -206,14 +230,19 @@ function actionWebhookDeploy()
         exit();
     }
 
-    executeDeployment();
+    executeDeploymentWithSingleShellProccess();
+}
+
+function actionDebugDeploy()
+{
+    executeDeploymentWithSingleShellProccess();
 }
 
 function actionWebhookDeployNoWait()
 {
     global $config, $method;
     validateSecurity();
-    if ($method !== $config['webhook_method'] ) {
+    if ($method !== $config['webhook_method']) {
         http_response_code(405);
         exit('Method Not Allowed');
     }
@@ -222,17 +251,31 @@ function actionWebhookDeployNoWait()
     exec('php '.__FILE__.' run-deploy '.escapeshellarg($host).' > /dev/null 2>&1 &');
 
     // set header json
-    http_response_code(202); 
+    http_response_code(202);
     header('Content-Type: application/json');
-    echo json_encode([
-        'status' => 'accepted',
-        'message' => 'Deployment initiated in background',
-    ]);
+    echo
+        json_encode([
+            'status' => 'accepted',
+            'message' => 'Deployment initiated in background',
+        ])
+    ;
 }
 
 function actionLogView()
 {
     showSpecificLog($_GET['file'] ?? '');
+}
+
+function actionLogBaseRawView($id)
+{
+    $file = $id.'.log.rlog';
+    showSpecificLog($file);
+}
+
+function actionLogHtmlView($id)
+{
+    $file = $id.'.log.html';
+    showSpecificLog($file, 'text/html');
 }
 
 function actionLogRawView($id)
@@ -263,7 +306,7 @@ function actionNotifyTest()
     // @mago-format-ignore-next
     $res = sendTelegram(
     <<<MARKDOWN
-🚀 *System Check: SPHPD*
+🧪 *System Check: SPHPD*
 
 *Host:* `$server`
 *Status:* `Operational`
@@ -306,20 +349,290 @@ function validateInstructions($tasks)
 
     foreach ($tasks as $index => $task) {
         if (! is_array($task)) {
-            return "Invalid Instructions format";
+            return 'Invalid Instructions format';
         }
 
-        if (! isset($task['run']) || empty($task['run'])) {
+        if (! isset($task['run']) || empty($task['run']) && $task['run'] !== '0' && $task['run'] !== 0) {
             $name = $task['name'] ?? 'Task #'.($index + 1);
 
             return "Task '{$name}' is missing a 'run' command.";
+        }
+
+        if (! is_string($task['run']) && ! is_array($task['run'])) {
+            $name = $task['name'] ?? 'Task #'.($index + 1);
+
+            return "Task '{$name}' 'run' must be a string or an array.";
         }
     }
 
     return true;
 }
 
-function executeDeployment()
+function validateJsonContent()
+{
+    global $config;
+    $jsonContent = file_get_contents($config['instructions']);
+    $tasks = json_decode($jsonContent, true);
+    if (is_null($tasks)) {
+        return [
+            'Deployment started. Processing instructions...',
+            'Invalid JSON in instructions file.',
+        ];
+    }
+    $errInstructions = validateInstructions($tasks);
+    if ($errInstructions !== true) {
+        return [
+            "Deployment started. Error in instructions: $errInstructions",
+            $errInstructions,
+        ];
+    }
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        return [
+            'Deployment started. Processing instructions...',
+            'Invalid JSON in instructions file.',
+        ];
+    }
+
+    return null;
+}
+
+// ORIGINAL
+/*
+ * function executeDeployment()
+ * {
+ * global $config, $statusFile;
+ *
+ * // Validate required config variables
+ * $requiredVars = [
+ * 'project_path' => $config['project_path'],
+ * 'instructions' => $config['instructions'],
+ * ];
+ * foreach ($requiredVars as $label => $value) {
+ * if (empty($value) || ! file_exists($value) && $label === 'project_path') {
+ * http_response_code(400);
+ * exit("Error: Configuración inválida o faltante: $label");
+ * }
+ * }
+ *
+ * if (file_exists($statusFile)) {
+ * $current = json_decode(file_get_contents($statusFile), true);
+ * // Si el proceso anterior ya terminó, borramos el lock viejo para permitir el nuevo
+ * if (isset($current['finished']) && $current['finished'] === true) {
+ * unlink($statusFile);
+ * } else {
+ * http_response_code(409);
+ * exit('Deployment already in progress.');
+ * }
+ * }
+ *
+ * $startTime = microtime(true);
+ * $logFilename = 'deploy_'.date('Ymd_His').'.log';
+ * $logPath = $config['logs_path'].'/'.$logFilename;
+ * $logPathRaw = $config['logs_path'].'/'.$logFilename.'.rlog';
+ * if (! file_exists($config['instructions']))
+ * exit('Instruction file missing.');
+ *
+ * $jsonContent = file_get_contents($config['instructions']);
+ * // Validate if the instructions file has valid JSON and a valid format:
+ * $tasks = json_decode($jsonContent, true);
+ * if (is_null($tasks)) {
+ * sendTelegram(
+ * buildReport(
+ * $_SERVER['HTTP_HOST'] ?? 'localhost',
+ * false,
+ * 0,
+ * '',
+ * '',
+ * 'Deployment started. Processing instructions...',
+ * ),
+ * );
+ * exit('Invalid JSON in instructions file.');
+ * }
+ * $errInstructions = validateInstructions($tasks);
+ * if ($errInstructions !== true) {
+ * sendTelegram(
+ * buildReport(
+ * $_SERVER['HTTP_HOST'] ?? 'localhost',
+ * false,
+ * 0,
+ * '',
+ * '',
+ * "Deployment started. Error in instructions: $errInstructions",
+ * ),
+ * );
+ * exit($errInstructions);
+ * }
+ *
+ * if (json_last_error() !== JSON_ERROR_NONE)
+ * exit('Invalid JSON in instructions file.');
+ *
+ * file_put_contents($statusFile, json_encode([
+ * 'running' => true,
+ * 'task' => 'Starting...',
+ * 'index' => 0,
+ * 'total' => count($tasks),
+ * 'start' => $startTime,
+ * ]));
+ * chdir($config['project_path']);
+ * $success = true;
+ * $failedTask = '';
+ * $fullLog = 'START: '.date('Y-m-d H:i:s')."\n";
+ * $fullLogRaw = 'START: '.date('Y-m-d H:i:s')."\n";
+ *
+ * $taskStatus = array_fill(0, count($tasks), ['status' => 'pending', 'name' => '']);
+ * foreach ($tasks as $i => $t) {
+ * $taskStatus[$i]['name'] = $t['name'] ?? 'Task '.($i + 1);
+ * }
+ *
+ * foreach ($tasks as $index => $task) {
+ * $taskStatus[$index]['status'] = 'running';
+ *
+ * $name = $task['name'] ?? 'Unnamed Task';
+ * $commands = is_array($task['run']) ? $task['run'] : [$task['run']];
+ *
+ * file_put_contents($statusFile, json_encode([
+ * 'running' => true,
+ * 'task' => $name,
+ * 'index' => $index + 1,
+ * 'total' => count($tasks),
+ * 'start' => $startTime,
+ * 'history' => $taskStatus,
+ * ]));
+ *
+ * // Separators
+ * $fullLog .= "\n---------------------------------------------\n";
+ * $fullLogRaw .= "\n---------------------------------------------\n";
+ * $fullLog .= "\n[TASK]: $name\n";
+ * $taskSuccess = true;
+ * $errorOutput = '';
+ *
+ * foreach ($commands as $cmd) {
+ * $fullLog .= "[CMD]: $cmd\n";
+ * $fullLogRaw .= '['.date('Y-m-d H:i:s')."] $cmd\n";
+ *
+ * $process = proc_open(
+ * $cmd,
+ * [
+ * 0 => ['pipe', 'r'],
+ * 1 => ['pipe', 'w'],
+ * 2 => ['pipe', 'w'],
+ * ],
+ * $pipes,
+ * );
+ *
+ * if (is_resource($process)) {
+ * fclose($pipes[0]); // We don't need stdin
+ *
+ * $cmdStdout = '';
+ * $cmdStderr = '';
+ *
+ * while (true) {
+ * $read = [$pipes[1], $pipes[2]];
+ * $write = null;
+ * $except = null;
+ *
+ * $res = stream_select($read, $write, $except, 1);
+ *
+ * if ($res > 0) {
+ * foreach ($read as $pipe) {
+ * $content = fread($pipe, 8192);
+ * if ($pipe === $pipes[1]) {
+ * $cmdStdout .= $content;
+ * $fullLogRaw .= $content;
+ * } else {
+ * $cmdStderr .= $content;
+ * }
+ * }
+ * }
+ *
+ * if (feof($pipes[1]) && feof($pipes[2])) {
+ * break;
+ * }
+ *
+ * $status = proc_get_status($process);
+ * if (! $status['running'] && $res === 0) {
+ * break;
+ * }
+ * }
+ *
+ * fclose($pipes[1]);
+ * fclose($pipes[2]);
+ * $exitCode = proc_close($process);
+ *
+ * $fullLog .= "STDOUT: $cmdStdout\nSTDERR: $cmdStderr\nEXIT: $exitCode\n";
+ *
+ * if ($exitCode !== 0) {
+ * $taskSuccess = false;
+ * $errorOutput = $cmdStderr ?: $cmdStdout;
+ * break;
+ * }
+ * } else {
+ * $taskSuccess = false;
+ * $errorOutput = "Failed to open process: $cmd";
+ * $fullLog .= "ERROR: $errorOutput\n";
+ * break;
+ * }
+ * }
+ *
+ * if ($taskSuccess) {
+ * $taskStatus[$index]['status'] = 'success';
+ * } else {
+ * $success = false;
+ * $failedTask = $name;
+ * $taskStatus[$index]['status'] = 'failed';
+ * // Guardamos el último estado antes de salir por error
+ * file_put_contents($statusFile, json_encode([
+ * 'running' => false, // Detener animación en live si falló
+ * 'task' => "FAILED: $name",
+ * 'index' => $index + 1,
+ * 'total' => count($tasks),
+ * 'history' => $taskStatus,
+ * ]));
+ * break;
+ * }
+ * }
+ * // ================================================================================
+ * $duration = round(microtime(true) - $startTime, 2);
+ *
+ * file_put_contents($logPath, $fullLog."\nEND. Duration: {$duration}s");
+ * file_put_contents($logPathRaw, $fullLogRaw."\nEND. Duration: {$duration}s");
+ *
+ * // unlink($statusFile);
+ * file_put_contents($statusFile, json_encode([
+ * 'running' => false, // Is stopped
+ * 'finished' => true,
+ * 'success' => $success,
+ * 'task' => $success ? 'Deployment Finished Successfully' : 'Deployment Failed',
+ * 'index' => $index + 1,
+ * 'total' => count($tasks),
+ * 'start' => $startTime,
+ * 'duration' => $duration,
+ * 'history' => $taskStatus,
+ * 'log_file' => $logFilename,
+ * ]));
+ *
+ * $protocol = isset($_SERVER['HTTPS']) ? 'https://' : 'http://';
+ *
+ * $host = defined('CLI_HOST') ? CLI_HOST : $_SERVER['HTTP_HOST'] ?? 'localhost';
+ * $logfileNameWithoutExt = pathinfo($logFilename, PATHINFO_FILENAME);
+ * $logUrl = "$protocol{$host}/log/rview/{$logfileNameWithoutExt}";
+ *
+ * sendTelegram(
+ * buildReport(
+ * $host,
+ * $success,
+ * $duration,
+ * $logUrl,
+ * $failedTask ?? '',
+ * $errorOutput ?? '',
+ * ),
+ * );
+ * if (! isset($_GET['manual']))
+ * echo 'Done.';
+ * }
+ */
+
+function executeDeploymentWithSingleShellProccess()
 {
     global $config, $statusFile;
 
@@ -335,6 +648,7 @@ function executeDeployment()
         }
     }
 
+    // Validate Status file for deployments in progress
     if (file_exists($statusFile)) {
         $current = json_decode(file_get_contents($statusFile), true);
         // Si el proceso anterior ya terminó, borramos el lock viejo para permitir el nuevo
@@ -346,163 +660,310 @@ function executeDeployment()
         }
     }
 
-    $startTime = microtime(true);
-    $logFilename = 'deploy_'.date('Ymd_His').'.log';
-    $logPath = $config['logs_path'].'/'.$logFilename;
-    $logPathRaw = $config['logs_path'].'/'.$logFilename.'.rlog';
+    // Validate instructions file and format
     if (! file_exists($config['instructions']))
         exit('Instruction file missing.');
 
-    $jsonContent = file_get_contents($config['instructions']);
     // Validate if the instructions file has valid JSON and a valid format:
+    $errorValue = validateJsonContent();
+    if ($errorValue) {
+        sendTelegram(
+            buildReport(
+                $_SERVER['HTTP_HOST'] ?? 'localhost',
+                false,
+                0,
+                '',
+                '',
+                $errorValue[0] ?? 'Error in instructions',
+            ),
+        );
+        exit($errorValue[1] ?? 'Error in instructions');
+    }
+
+    // Setup tasks logs
+    $logFileName = 'deploy_'.date('Ymd_His').'.log';
+
+    $logFilePath = $config['logs_path'].'/'.$logFileName;
+    $logFilePathRaw = $config['logs_path'].'/'.$logFileName.'.rlog';
+    $logFIlePathHTML = $config['logs_path'].'/'.$logFileName.'.html';
+
+    // Get tasks in the instructions file
+    $jsonContent = file_get_contents($config['instructions']);
     $tasks = json_decode($jsonContent, true);
-    if (is_null($tasks)) {
-        sendTelegram(
-            buildReport(
-                $_SERVER['HTTP_HOST'] ?? 'localhost',
-                false,
-                0,
-                '',
-                '',
-                'Deployment started. Processing instructions...',
-            ),
-        );
-        exit('Invalid JSON in instructions file.');
-    }
-    $errInstructions = validateInstructions($tasks);
-    if ($errInstructions !== true) {
-        sendTelegram(
-            buildReport(
-                $_SERVER['HTTP_HOST'] ?? 'localhost',
-                false,
-                0,
-                '',
-                '',
-                "Deployment started. Error in instructions: $errInstructions",
-            ),
-        );
-        exit($errInstructions);
-    }
 
-    if (json_last_error() !== JSON_ERROR_NONE)
-        exit('Invalid JSON in instructions file.');
+    runTasks($logFilePath, $logFilePathRaw, $logFIlePathHTML, $tasks);
+}
 
+function createLogHtml($title, $bodyContent)
+{
+    // @mago-format-ignore-next
+    return <<<HTML
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>$title</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                padding: 10px;
+                background-color: #f9f9f9;
+            }
+            h1, h2, h3 {
+                color: #333;
+            }
+            pre {
+                background-color: #f0f0f0;
+                padding: 10px;
+                border-radius: 5px;
+                overflow-x: auto;
+            }
+            code {
+                font-family: 'Courier New', Courier, monospace;
+            }
+        </style>
+    </head>
+    <body>
+        $bodyContent
+    </body>
+</html>
+HTML;
+}
+
+function runTasks(
+    string $lofgilePath,
+    string $logFilePathRaw,
+    string $logFilePathHTML,
+    array $tasks,
+) {
+    global $statusFile, $config;
+
+    // Setup log files
+    $startTime = microtime(true);
+
+    //stes
+    $totalTaks = count($tasks);
+
+    // Init status file for live view
     file_put_contents($statusFile, json_encode([
         'running' => true,
         'task' => 'Starting...',
         'index' => 0,
-        'total' => count($tasks),
+        'total' => $totalTaks,
         'start' => $startTime,
     ]));
-    chdir($config['project_path']);
+
+    // Change execution directory to project path
+    // NOTE: replazable for the action in proc_open
+    // chdir($config['project_path']);
+    $cmdsCWD = $config['project_path'];
+
+    // initialize the flags
     $success = true;
     $failedTask = '';
     $fullLog = 'START: '.date('Y-m-d H:i:s')."\n";
     $fullLogRaw = 'START: '.date('Y-m-d H:i:s')."\n";
+    $htmlLogContent = '<h1>Deployment Log - Started at '.date('Y-m-d H:i:s')."</h1>\n";
 
-    $taskStatus = array_fill(0, count($tasks), ['status' => 'pending', 'name' => '']);
+    // Init the statusfile with pending status for all tasks
+    $taskStatus = [];
     foreach ($tasks as $i => $t) {
-        $taskStatus[$i]['name'] = $t['name'] ?? 'Task '.($i + 1);
+        $taskStatus[$i] = [
+            'name' => $t['name'] ?? 'Task '.($i + 1),
+            'status' => 'pending',
+        ];
     }
 
-    // foreach ($tasks as $index => $task) {
-    //     $taskStatus[$index]['status'] = 'running';
-    //
-    //     $name = $task['name'] ?? 'Unnamed Task';
-    //     $cmd = $task['run'] ?? '';
-    //
-    //     file_put_contents($statusFile, json_encode([
-    //         'running' => true,
-    //         'task' => $name,
-    //         'index' => $index + 1,
-    //         'total' => count($tasks),
-    //         'start' => $startTime,
-    //         'history' => $taskStatus,
-    //     ]));
-    //
-    //     $fullLog .= "\n[TASK]: $name\n[CMD]: $cmd\n";
-    //     $fullLogRaw .= "[" . date('Y-m-d H:i:s') . "] $cmd\n";
-    //
-    //     $process = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
-    //     $stdout = stream_get_contents($pipes[1]);
-    //     $stderr = stream_get_contents($pipes[2]);
-    //     $exitCode = proc_close($process);
-    //
-    //     $fullLog .= "STDOUT: $stdout\nSTDERR: $stderr\nEXIT: $exitCode\n";
-    //     $fullLogRaw .= "$stdout";
-    //
-    //     if ($exitCode !== 0) {
-    //         $success = false;
-    //         $failedTask = $name;
-    //
-    //         // break;
-    //     }
-    //     if ($exitCode === 0) {
-    //         // $taskStatus[$index] = 'success';
-    //         $taskStatus[$index]['status'] = 'success';
-    //     } else {
-    //         // $taskStatus[$index] = 'failed';
-    //         $taskStatus[$index]['status'] = 'failed';
-    //         // Guardamos el último estado antes de salir por error
-    //         file_put_contents($statusFile, json_encode([
-    //             'running' => false, // Detener animación en live si falló
-    //             'task' => "FAILED: $name",
-    //             'index' => $index + 1,
-    //             'total' => count($tasks),
-    //             'history' => $taskStatus,
-    //         ]));
-    //         $errorOutput = $stderr ?: $stdout;
-    //         break;
-    //     }
-    // }
-
-    [$exitCode, $failedTask, $errorOutput, $index] = runTasksWithShell(
-        $tasks,
-        $fullLog,
-        $fullLogRaw,
-        $taskStatus
+    // Start the execution of tasks
+    $descriptor = [
+        0 => ['pipe', 'r'], // stdin
+        1 => ['pipe', 'w'], // stdout
+        2 => ['pipe', 'w'], // stderr
+    ];
+    // start process shell
+    $process = proc_open(
+        'stdbuf -o0 -e0 bash',
+        $descriptor,
+        $pipes,
+        realpath($cmdsCWD),
     );
-    var_dump($exitCode, $failedTask, $errorOutput, $index);
-    echo "---";
-    die();
+    if (! is_resource($process)) {
+        file_put_contents($lofgilePath, "ERROR: Failed to start shell process\n", FILE_APPEND);
+        file_put_contents($logFilePathRaw, "ERROR: Failed to start shell process\n", FILE_APPEND);
+        die('Failed to start shell process');
+    }
 
-    $success = $exitCode === 0;
+    // Set non-blocking mode for stdout and stderr
+    stream_set_blocking($pipes[1], false);
+    stream_set_blocking($pipes[2], false);
+
+    // Execute tasks sequentially
+    foreach ($tasks as $indx => $task) {
+        // Total outputs
+        // NOTE: supressit
+        $stdout = '';
+        $stderr = '';
+
+        // update in task to running state
+        $taskStatus[$indx]['status'] = 'running';
+        $taskToRunCommands = $task['run'];
+        $taskToRunName = $task['name'] ?? 'Task #'.($indx + 1);
+        $commandsToRun = is_array($taskToRunCommands) ? $taskToRunCommands : [$taskToRunCommands];
+
+        // Update staus file for live view
+        file_put_contents($statusFile, json_encode([
+            'running' => true,
+            'task' => $taskToRunName,
+            'index' => $indx + 1,
+            'total' => $totalTaks,
+            'start' => $startTime,
+            'history' => $taskStatus,
+        ]));
+
+        // Put separators
+        $fullLog .= "\n+---------------------------------------------+\n";
+        $fullLogRaw .= "\n+---------------------------------------------+\n";
+        $htmlLogContent .= '<hr>';
+        $fullLog .= "[TASK]: $taskToRunName";
+        $htmlLogContent .= "<h2>$taskToRunName</h2>\n";
+
+        $taskSuccess = true;
+        $errorOutput = '';
+
+        foreach ($commandsToRun as $cmd) {
+            $fullLog .= "\n[CMD]: $cmd\n";
+            $fullLogRaw .= '['.date('Y-m-d H:i:s')."] $cmd\n";
+            $htmlLogContent .= "<h3>Command: $cmd</h3>\n";
+            // $htmlLogContent .= "<pre style='background:#f0f0f0;padding:10px;border-radius:5px;'><code>$cmd</code></pre>\n";
+
+            // __STDOUT_EOF__ y __STDERR_EOF__ print to finish
+            $wrapped = sprintf(
+                "%s ; __exit__=$? ; echo __STDOUT_EOF__\$__exit__ ; echo __STDERR_EOF__\$__exit__ >&2\n",
+                $cmd,
+            );
+            fwrite($pipes[0], $wrapped); // Send command to shell
+
+            $stdoutDone = false;
+            $stderrDone = false;
+            $exitCode = 0; // Success by default
+
+            // echo "Output:<br><pre style='background:#f0f0f0;padding:10px;border-radius:5px;'>";
+            $htmlLogContent .= "<pre style='background:#f0f0f0;padding:10px;border-radius:5px;'><code>";
+            while (! $stdoutDone || ! $stderrDone) {
+                $read = array_filter([$pipes[1], $pipes[2]]);
+                $write = null;
+                $except = null;
+
+                if (stream_select($read, $write, $except, 5) === false) {
+                    break;
+                }
+
+                foreach ($read as $stream) {
+                    $line = fgets($stream);
+                    if ($line === false)
+                        continue;
+
+                    if ($stream === $pipes[1]) {
+                        if (preg_match('/^__STDOUT_EOF__(\d+)/', $line, $m)) {
+                            $exitCode = (int) $m[1];
+                            $stdoutDone = true;
+                        } else {
+                            $stdout .= $line;
+                            $fullLogRaw .= '['.date('Y-m-d H:i:s')."][info  ] $line";
+                            $htmlLogContent .= htmlspecialchars($line);
+
+                            // echo '[OUT] '.$line;
+                            // if ($onOutput) $onOutput('stdout', rtrim($line), $cmd);
+                        }
+                    } else {
+                        if (preg_match('/^__STDERR_EOF__(\d+)/', $line, $m)) {
+                            $stderrDone = true;
+                        } else {
+                            $stderr .= $line;
+                            $fullLogRaw .= '['.date('Y-m-d H:i:s')."][error ] $line";
+                            $htmlLogContent .= "<span style='color:red;'>".htmlspecialchars($line).'</span>';
+
+                            // echo '[ERR] '.$line;
+                            // if ($onOutput) $onOutput('stderr', rtrim($line), $cmd);
+                        }
+                    }
+                }
+            }
+
+            $htmlLogContent .= "</code></pre>\n";
+            $fullLog .= "STDOUT: $stdout\nSTDERR: $stderr\nEXIT: $exitCode\n";
+
+            if ($exitCode !== 0) {
+                $taskSuccess = false;
+                $errorOutput = $stderr ?: $stdout;
+                break;
+            }
+        }
+
+        if ($taskSuccess) {
+            $taskStatus[$indx]['status'] = 'success';
+        } else {
+            $success = false;
+            $failedTask = $taskToRunName;
+            $taskStatus[$indx]['status'] = 'failed';
+            // Guardamos el último estado antes de salir por error
+            file_put_contents($statusFile, json_encode([
+                'running' => false, // Detener animación en live si falló
+                'task' => "FAILED: $taskToRunName",
+                'index' => $indx + 1,
+                'total' => $totalTaks,
+                'history' => $taskStatus,
+            ]));
+            break;
+        }
+    }
+
+    // ================================================================================
+
+    $fullLog .= "\n=============================================\n";
+    $fullLogRaw .= "\n=============================================\n";
 
     $duration = round(microtime(true) - $startTime, 2);
 
-    file_put_contents($logPath, $fullLog."\nEND. Duration: {$duration}s");
-    file_put_contents($logPathRaw, $fullLogRaw."\nEND. Duration: {$duration}s");
+    $htmlLogContent .= "<h2>Deployment finished in {$duration}s</h2>\n";
+    $htmlLogContent .= '<p><strong>Overall Status: '.($success ? 'SUCCESS' : "FAILED at $failedTask")."</strong></p>\n";
 
-    // unlink($statusFile);
+    // Update logs after each task
+    file_put_contents($lofgilePath, $fullLog."\nEND. Duration: {$duration}s");
+    file_put_contents($logFilePathRaw, $fullLogRaw."\nEND. Duration: {$duration}s");
+    file_put_contents($logFilePathHTML, createLogHtml("Deployment Log - $taskToRunName", $htmlLogContent));
+
+    // Update status
     file_put_contents($statusFile, json_encode([
-        'running' => false, // Is stopped
+        'running' => false,
         'finished' => true,
-        'success' => $success,
-        'task' => $success ? 'Deployment Finished Successfully' : 'Deployment Failed',
-        'index' => $index + 1,
-        'total' => count($tasks),
+        'success' => $taskSuccess,
+        'task' => $taskSuccess ? 'Deployment Finished Successfully' : 'Deployment Failed',
+        'index' => $indx + 1,
+        'total' => $totalTaks,
         'start' => $startTime,
         'duration' => $duration,
         'history' => $taskStatus,
-        'log_file' => $logFilename,
+        'log_file' => basename($lofgilePath),
     ]));
 
     $protocol = isset($_SERVER['HTTPS']) ? 'https://' : 'http://';
-
     $host = defined('CLI_HOST') ? CLI_HOST : $_SERVER['HTTP_HOST'] ?? 'localhost';
-    $logfileNameWithoutExt = pathinfo($logFilename, PATHINFO_FILENAME);
-    $logUrl = "$protocol{$host}/log/rview/{$logfileNameWithoutExt}";
+    $logFileNameWithoutExt = pathinfo($lofgilePath, PATHINFO_FILENAME);
+    $logUrl = "$protocol{$host}/log/rview/{$logFileNameWithoutExt}";
 
     sendTelegram(
         buildReport(
             $host,
-            $success,
+            $taskSuccess,
             $duration,
             $logUrl,
-            $failedTask ?? '',
-            $errorOutput ?? '',
+            $taskToRunName,
+            $errorOutput,
         ),
     );
+
     if (! isset($_GET['manual']))
         echo 'Done.';
 }
@@ -510,6 +971,10 @@ function executeDeployment()
 function sendTelegram($text)
 {
     global $config;
+
+    if (! $config['telegram_enabled'])
+        return false;
+
     $botTkn = $config['bot_token'] ?? '';
     if (empty($botTkn))
         return false;
@@ -603,12 +1068,13 @@ $errorOutput
 MARKDOWN;
 }
 
-function showSpecificLog($file)
+function showSpecificLog($file, $type = 'text/plain')
 {
     global $config;
     $path = realpath($config['logs_path'].'/'.$file);
     if ($path && str_starts_with($path, realpath($config['logs_path']))) {
-        header('Content-Type: text/plain');
+        // header('Content-Type: text/plain');
+        header("Content-Type: $type");
         readfile($path);
     } else
         exit('Access Denied');
@@ -629,7 +1095,8 @@ function clearHistory()
 {
     global $config, $statusFile;
 
-    $logs = glob($config['logs_path'].'/*.log');
+    // $logs = glob($config['logs_path'].'/*.log');
+    $logs = glob($config['logs_path'].'/*');
     foreach ($logs as $log)
         unlink($log);
 
@@ -863,6 +1330,13 @@ function renderHealthView()
 
                             <?php endif; ?>
 
+                            <?php if (env('MODE', 'production') !== 'production'): ?>
+                                <a href="/debugdeploy" 
+                                    target="_blank"
+                                    onclick="return confirm('Debug deployment?')"
+                                    class="block w-full text-center bg-amber-800 dark:bg-amber-800 text-white py-2 rounded text-xs font-bold hover:bg-amber-700 dark:hover:bg-amber-700 transition">DEBUG DEPLOYMENT</a>
+                            <?php endif; ?>
+
                             <?php if (isset($statusData['finished'])): ?>
                                 <a href="/status/live" class="block w-full text-center border border-emerald-500/30 text-emerald-500 py-2 rounded text-[10px] font-bold hover:bg-emerald-500/5 transition uppercase">
                                     View Last Result
@@ -877,7 +1351,7 @@ function renderHealthView()
                 <div class="lg:col-span-3 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden shadow-sm dark:shadow-xl flex flex-col">
                     <div class="p-5 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-900/30">
                         <h2 class="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-widest">Recent Execution History</h2>
-                        <a href="/log/last" class="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold uppercase tracking-tighter transition">View Latest Raw</a>
+                        <a target="_blank" href="/log/last" class="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold uppercase tracking-tighter transition">View Latest Raw</a>
                     </div>
                     <div class="overflow-x-auto">
                         <table class="w-full text-left border-collapse">
@@ -891,13 +1365,15 @@ function renderHealthView()
                             <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
                                 <?php foreach ($lastLogs as $logPath):
                                     $fn = basename($logPath);
+                                    $logName = pathinfo($fn, PATHINFO_FILENAME);
                                     $content = file_get_contents($logPath);
                                     // $isOk = str_contains($content, 'Status: SUCCESS');
                                     // get the penultimate line of the log
                                     $lines = preg_split('/\r\n|\r|\n/', trim($content));
                                     $linesQuantity = count($lines);
-                                    $exitLastStatus = $lines[$linesQuantity - 3] ?? '';
+                                    $exitLastStatus = $lines[$linesQuantity - 5] ?? '';
                                     $isOk = str_contains($exitLastStatus, 'EXIT: 0');
+                                    // var_dump($exitLastStatus);
 
                                     ?>
                                     <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition">
@@ -911,7 +1387,9 @@ function renderHealthView()
                                             filemtime($logPath),
                                         ) ?></td>
                                         <td class="px-6 py-4 text-right">
-                                            <a href="/log/view?file=<?= urlencode($fn) ?>" class="text-blue-600 dark:text-blue-500 hover:underline font-bold text-xs transition">OPEN</a>
+                                            <a target="_blank" href="/log/rview/<?= urlencode($logName) ?>" class="text-blue-600 dark:text-blue-500 hover:underline font-bold text-xs transition">OPEN</a>
+                                            <a target="_blank" href="/log/bview/<?= urlencode($logName) ?>" class="text-blue-600 dark:text-blue-500 hover:underline font-bold text-xs transition">RAW</a>
+                                            <a target="_blank" href="/log/htmlview/<?= urlencode($logName) ?>" class="text-blue-600 dark:text-blue-500 hover:underline font-bold text-xs transition">HTML</a>
                                         </td>
                                     </tr>
                                 <?php endforeach;

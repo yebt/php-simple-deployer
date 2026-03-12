@@ -4,11 +4,29 @@
     "run": "ls"
   },
   {
+    "name": "Create folder",
+    "run": [
+      "sleep 5",
+      "mkdir -p release/build"
+    ]
+  },
+  {
+    "name": "Set up environment",
+    "run": [
+      "export NODE_ENV=production",
+      "echo Environment set to $NODE_ENV"
+    ]
+  },
+  {
     "name": "Build",
     "run": [
-      "composer install --no-dev",
-      "php artisan migrate",
-      "php artisan config:cache"
+      "echo Environment: $NODE_ENV",
+      "CAP=2",
+      "echo Building with CAP=$CAP",
+      "ls",
+      "touch build.txt",
+      "echo 'Build complete' > build.txt"
     ]
   }
 ]
+
