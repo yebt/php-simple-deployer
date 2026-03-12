@@ -153,6 +153,9 @@ $router = new RegExpRouter;
 $router->add('/status/check', 'actionStatusCheck');
 $router->add('/', 'actionHome');
 $router->add('/health', 'actionHealthView');
+if (env('MODE', 'production') !== 'production') {
+    $router->add('/debugdeploy', 'actionDebugDeploy');
+}
 $router->add('/webhook/deploy', 'actionWebhookDeploy');
 $router->add('/webhook/deploy/nowait', 'actionWebhookDeployNoWait');
 $router->add('/log/view', 'actionLogView');
@@ -225,6 +228,11 @@ function actionWebhookDeploy()
     }
 
     executeDeployment();
+}
+
+function actionDebugDeploy()
+{
+    executeDeploymentWithSingleShellProccess();
 }
 
 function actionWebhookDeployNoWait()
@@ -351,6 +359,35 @@ function validateInstructions($tasks)
     return true;
 }
 
+function validateJsonContent()
+{
+    global $config;
+    $jsonContent = file_get_contents($config['instructions']);
+    $tasks = json_decode($jsonContent, true);
+    if (is_null($tasks)) {
+        return [
+            'Deployment started. Processing instructions...',
+            'Invalid JSON in instructions file.',
+        ];
+    }
+    $errInstructions = validateInstructions($tasks);
+    if ($errInstructions !== true) {
+        return [
+            "Deployment started. Error in instructions: $errInstructions",
+            $errInstructions,
+        ];
+    }
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        return [
+            'Deployment started. Processing instructions...',
+            'Invalid JSON in instructions file.',
+        ];
+    }
+
+    return null;
+}
+
+// ORIGINAL
 function executeDeployment()
 {
     global $config, $statusFile;
@@ -581,6 +618,413 @@ function executeDeployment()
     );
     if (! isset($_GET['manual']))
         echo 'Done.';
+}
+
+function executeDeploymentWithSingleShellProccess()
+{
+    global $config, $statusFile;
+
+    // Validate required config variables
+    $requiredVars = [
+        'project_path' => $config['project_path'],
+        'instructions' => $config['instructions'],
+    ];
+    foreach ($requiredVars as $label => $value) {
+        if (empty($value) || ! file_exists($value) && $label === 'project_path') {
+            http_response_code(400);
+            exit("Error: Configuración inválida o faltante: $label");
+        }
+    }
+
+    // Validate Status file for deployments in progress
+    if (file_exists($statusFile)) {
+        $current = json_decode(file_get_contents($statusFile), true);
+        // Si el proceso anterior ya terminó, borramos el lock viejo para permitir el nuevo
+        if (isset($current['finished']) && $current['finished'] === true) {
+            unlink($statusFile);
+        } else {
+            http_response_code(409);
+            exit('Deployment already in progress.');
+        }
+    }
+
+    // Validate instructions file and format
+    if (! file_exists($config['instructions']))
+        exit('Instruction file missing.');
+
+    // Validate if the instructions file has valid JSON and a valid format:
+    $errorValue = validateJsonContent();
+    if ($errorValue) {
+        sendTelegram(
+            buildReport(
+                $_SERVER['HTTP_HOST'] ?? 'localhost',
+                false,
+                0,
+                '',
+                '',
+                $errorValue[0] ?? 'Error in instructions',
+            ),
+        );
+        exit($errorValue[1] ?? 'Error in instructions');
+    }
+
+    // Setup tasks logs
+    $logFileName = 'deploy_'.date('Ymd_His').'.log';
+
+    $logFilePath = $config['logs_path'].'/'.$logFileName;
+    $logFilePathRaw = $config['logs_path'].'/'.$logFileName.'.rlog';
+
+    // Get tasks in the instructions file
+    $jsonContent = file_get_contents($config['instructions']);
+    $tasks = json_decode($jsonContent, true);
+
+    runTasks($logFilePath, $logFilePathRaw, $tasks);
+}
+
+// function runTasks(
+//     string $lofgilePath,
+//     string $logFilePathRaw,
+//     array $tasks,
+// ) {
+//     global $statusFile, $config;
+//
+//     // Setup log files
+//     $startTime = microtime(true);
+//
+//     // Init status file for live view
+//     file_put_contents($statusFile, json_encode([
+//         'running' => true,
+//         'task' => 'Starting...',
+//         'index' => 0,
+//         'total' => count($tasks),
+//         'start' => $startTime,
+//     ]));
+//
+//     // Change execution directory to project path
+//     // NOTE: replazable for the action in proc_open
+//     // chdir($config['project_path']);
+//     $cmdsCWD = $config['project_path'];
+//
+//     // initialize the flags
+//     $success = true;
+//     $failedTask = '';
+//     $fullLog = 'START: '.date('Y-m-d H:i:s')."\n";
+//     $fullLogRaw = 'START: '.date('Y-m-d H:i:s')."\n";
+//
+//     // Init the statusfile with pending status for all tasks
+//     $taskStatus = [];
+//     foreach ($tasks as $i => $t) {
+//         $taskStatus[$i]['name'] = [
+//             'name' => $t['name'] ?? 'Task '.($i + 1),
+//             'status' => 'pending',
+//         ];
+//     }
+//
+//     // Start the execution of tasks
+//     // pipes
+//     $descriptor = [
+//         0 => ['pipe', 'r'], // stdin
+//         1 => ['pipe', 'w'], // stdout
+//         2 => ['pipe', 'w'], // stderr
+//     ];
+//
+//     // start process shell
+//     $process = proc_open('stdbuf -o0 -e0 bash', $descriptor, $pipes);
+//     if (! is_resource($process)) {
+//         die('Failed to start shell process');
+//     }
+//
+//     stream_set_blocking($pipes[1], false);
+//     stream_set_blocking($pipes[2], false);
+//
+//     // Internal function
+//     function run($pipes, $cmd)
+//     {
+//         fwrite($pipes[0], $cmd."\n");
+//
+//         $out = stream_get_contents($pipes[1], false);
+//         $err = stream_get_contents($pipes[2], false);
+//
+//         return [$out, $err];
+//     }
+//
+//     $commands = [
+//         'echo START',
+//         'pwd',
+//         'ls -la',
+//         'whoami',
+//         'uname -a',
+//         'echo DONE',
+//         'ls -la *.c',
+//     ];
+//
+//     foreach ($commands as $cmd) {
+//         $stdout = '';
+//         $stderr = '';
+//         echo ">>> Ejecutando: $cmd<br>";
+//
+//         // __STDOUT_EOF__ y __STDERR_EOF__ se imprimen al finalizar
+//         $wrapped = sprintf(
+//             "%s ; __exit__=$? ; echo __STDOUT_EOF__\$__exit__ ; echo __STDERR_EOF__\$__exit__ >&2\n",
+//             $cmd,
+//         );
+//         fwrite($pipes[0], $wrapped);
+//
+//         $stdoutDone = false;
+//         $stderrDone = false;
+//         $exitCode = 0;
+//
+//         // fwrite($pipes[0], $cmd."\n");
+//
+//         echo "Output:<br><pre style='background:#f0f0f0;padding:10px;border-radius:5px;'>";
+//         while (!$stdoutDone || !$stderrDone) {
+//             $read = array_filter([$pipes[1], $pipes[2]]);
+//             $write = null;
+//             $except = null;
+//
+//             if (stream_select($read, $write, $except, 5) === false) {
+//                 break;
+//             }
+//
+//             // foreach ($read as $r) {
+//             //     $data = fread($r, 8192);
+//             //
+//             //     if ($data !== false && strlen($data) > 0) {
+//             //         if ($r === $pipes[1]) {
+//             //             echo '[OUT] '.$data;
+//             //         }
+//             //
+//             //         if ($r === $pipes[2]) {
+//             //             echo '[ERR] '.$data;
+//             //         }
+//             //     }
+//             //
+//             //     if ($data !== false && strlen($data) > 0) {
+//             //         echo $data;
+//             //     }
+//             // }
+//
+//             // pequeña pausa para evitar loop agresivo
+//             // usleep(100000);
+//             //
+//             // // verificamos si ya no hay más salida momentáneamente
+//             // $status = proc_get_status($process);
+//             // if (! $status['running']) {
+//             //     $running = false;
+//             // }
+//             //
+//             // // si no hay más datos en buffers
+//             // if (feof($pipes[1]) && feof($pipes[2])) {
+//             //     $running = false;
+//             // }
+//             //
+//             // // romper loop cuando no hay actividad
+//             // if (
+//             //     stream_get_meta_data($pipes[1])['unread_bytes'] == 0
+//             //     && stream_get_meta_data($pipes[2])['unread_bytes'] == 0
+//             // ) {
+//             //     break;
+//             // }
+//
+//             foreach ($read as $stream) {
+//                 $line = fgets($stream);
+//                 if ($line === false) continue;
+//
+//                 if ($stream === $pipes[1]) {
+//                     if (preg_match('/^__STDOUT_EOF__(\d+)/', $line, $m)) {
+//                         $exitCode   = (int) $m[1];
+//                         $stdoutDone = true;
+//                     } else {
+//                         $stdout .= $line;
+//                         echo '[OUT] '.$line;
+//                         // if ($onOutput) $onOutput('stdout', rtrim($line), $cmd);
+//                     }
+//                 } else {
+//                     if (preg_match('/^__STDERR_EOF__(\d+)/', $line, $m)) {
+//                         $stderrDone = true;
+//                     } else {
+//                         $stderr .= $line;
+//                         echo '[ERR] '.$line;
+//                         // if ($onOutput) $onOutput('stderr', rtrim($line), $cmd);
+//                     }
+//                 }
+//             }
+//         }
+//         echo '</pre><br>';
+//     }
+//     dump_highlight($process);
+// }
+
+function runTasks(
+    string $lofgilePath,
+    string $logFilePathRaw,
+    array $tasks,
+) {
+    global $statusFile, $config;
+
+    // Setup log files
+    $startTime = microtime(true);
+
+    // Init status file for live view
+    file_put_contents($statusFile, json_encode([
+        'running' => true,
+        'task' => 'Starting...',
+        'index' => 0,
+        'total' => count($tasks),
+        'start' => $startTime,
+    ]));
+
+    // Change execution directory to project path
+    // NOTE: replazable for the action in proc_open
+    // chdir($config['project_path']);
+    $cmdsCWD = $config['project_path'];
+
+    // initialize the flags
+    $success = true;
+    $failedTask = '';
+    $fullLog = 'START: '.date('Y-m-d H:i:s')."\n";
+    $fullLogRaw = 'START: '.date('Y-m-d H:i:s')."\n";
+
+    // Init the statusfile with pending status for all tasks
+    $taskStatus = [];
+    foreach ($tasks as $i => $t) {
+        $taskStatus[$i]['name'] = [
+            'name' => $t['name'] ?? 'Task '.($i + 1),
+            'status' => 'pending',
+        ];
+    }
+
+    // Start the execution of tasks
+    $descriptor = [
+        0 => ['pipe', 'r'], // stdin
+        1 => ['pipe', 'w'], // stdout
+        2 => ['pipe', 'w'], // stderr
+    ];
+    // start process shell
+    $process = proc_open('stdbuf -o0 -e0 bash', $descriptor, $pipes);
+    if (! is_resource($process)) {
+        die('Failed to start shell process');
+    }
+
+    stream_set_blocking($pipes[1], false);
+    stream_set_blocking($pipes[2], false);
+
+    // Internal function
+    function run($pipes, $cmd)
+    {
+        fwrite($pipes[0], $cmd."\n");
+
+        $out = stream_get_contents($pipes[1], false);
+        $err = stream_get_contents($pipes[2], false);
+
+        return [$out, $err];
+    }
+
+    $commands = [
+        'echo START',
+        'pwd',
+        'ls -la',
+        'whoami',
+        'uname -a',
+        'echo DONE',
+        'ls -la *.c',
+    ];
+
+    foreach ($commands as $cmd) {
+        $stdout = '';
+        $stderr = '';
+        echo ">>> Ejecutando: $cmd<br>";
+
+        // __STDOUT_EOF__ y __STDERR_EOF__ se imprimen al finalizar
+        $wrapped = sprintf(
+            "%s ; __exit__=$? ; echo __STDOUT_EOF__\$__exit__ ; echo __STDERR_EOF__\$__exit__ >&2\n",
+            $cmd,
+        );
+        fwrite($pipes[0], $wrapped);
+
+        $stdoutDone = false;
+        $stderrDone = false;
+        $exitCode = 0;
+
+        // fwrite($pipes[0], $cmd."\n");
+
+        echo "Output:<br><pre style='background:#f0f0f0;padding:10px;border-radius:5px;'>";
+        while (!$stdoutDone || !$stderrDone) {
+            $read = array_filter([$pipes[1], $pipes[2]]);
+            $write = null;
+            $except = null;
+
+            if (stream_select($read, $write, $except, 5) === false) {
+                break;
+            }
+
+            // foreach ($read as $r) {
+            //     $data = fread($r, 8192);
+            //
+            //     if ($data !== false && strlen($data) > 0) {
+            //         if ($r === $pipes[1]) {
+            //             echo '[OUT] '.$data;
+            //         }
+            //
+            //         if ($r === $pipes[2]) {
+            //             echo '[ERR] '.$data;
+            //         }
+            //     }
+            //
+            //     if ($data !== false && strlen($data) > 0) {
+            //         echo $data;
+            //     }
+            // }
+
+            // pequeña pausa para evitar loop agresivo
+            // usleep(100000);
+            //
+            // // verificamos si ya no hay más salida momentáneamente
+            // $status = proc_get_status($process);
+            // if (! $status['running']) {
+            //     $running = false;
+            // }
+            //
+            // // si no hay más datos en buffers
+            // if (feof($pipes[1]) && feof($pipes[2])) {
+            //     $running = false;
+            // }
+            //
+            // // romper loop cuando no hay actividad
+            // if (
+            //     stream_get_meta_data($pipes[1])['unread_bytes'] == 0
+            //     && stream_get_meta_data($pipes[2])['unread_bytes'] == 0
+            // ) {
+            //     break;
+            // }
+
+            foreach ($read as $stream) {
+                $line = fgets($stream);
+                if ($line === false) continue;
+
+                if ($stream === $pipes[1]) {
+                    if (preg_match('/^__STDOUT_EOF__(\d+)/', $line, $m)) {
+                        $exitCode   = (int) $m[1];
+                        $stdoutDone = true;
+                    } else {
+                        $stdout .= $line;
+                        echo '[OUT] '.$line;
+                        // if ($onOutput) $onOutput('stdout', rtrim($line), $cmd);
+                    }
+                } else {
+                    if (preg_match('/^__STDERR_EOF__(\d+)/', $line, $m)) {
+                        $stderrDone = true;
+                    } else {
+                        $stderr .= $line;
+                        echo '[ERR] '.$line;
+                        // if ($onOutput) $onOutput('stderr', rtrim($line), $cmd);
+                    }
+                }
+            }
+        }
+        echo '</pre><br>';
+    }
+    dump_highlight($process);
 }
 
 function sendTelegram($text)
