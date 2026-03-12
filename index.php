@@ -1112,6 +1112,80 @@ function clearHistory()
     header('Location: /health?cleared=1');
 }
 
+function runTasksWithShell($tasks, &$fullLog, &$fullLogRaw, &$taskStatus)
+{
+    $descriptors = [
+        0 => ['pipe', 'r'], // stdin
+        1 => ['pipe', 'w'], // stdout
+        2 => ['pipe', 'w'], // stderr
+    ];
+
+    $process = proc_open('/bin/bash -s', $descriptors, $pipes);
+
+    if (!is_resource($process)) {
+        throw new RuntimeException("Unable to start shell");
+    }
+
+
+    foreach ($tasks as $index => $task) {
+
+        $name = $task['name'] ?? 'Unnamed Task';
+        $cmd  = $task['run'];
+
+        $taskStatus[$index]['status'] = 'running';
+
+        $fullLog .= "\n[TASK]: $name\n[CMD]: $cmd\n";
+        $fullLogRaw .= "[" . date('Y-m-d H:i:s') . "] $cmd\n";
+
+        fwrite($pipes[0], $cmd . "\n");
+        fwrite($pipes[0], "echo __EXIT_CODE:$?\n");
+
+        fflush($pipes[0]);
+
+        $stdout = '';
+        $stderr = '';
+        $exitCode = 1;
+
+        while (true) {
+
+            $line = fgets($pipes[1]);
+
+            if ($line === false) break;
+
+            if (str_starts_with($line, "__EXIT_CODE:")) {
+                $exitCode = (int) trim(str_replace("__EXIT_CODE:", "", $line));
+                break;
+            }
+
+            $stdout .= $line;
+        }
+
+        echo "DONE";
+        $stderr .= stream_get_contents($pipes[2]);
+        echo "<br>";
+
+        $fullLog .= "STDOUT: $stdout\nSTDERR: $stderr\nEXIT: $exitCode\n";
+        $fullLogRaw .= $stdout;
+
+        if ($exitCode === 0) {
+            $taskStatus[$index]['status'] = 'success';
+        } else {
+            $taskStatus[$index]['status'] = 'failed';
+            // return [$exitCode, $name, $stderr ?: $stdout];
+            return [$exitCode, $name ?? '', $stderr ?: $stdout, $index ?? 0];
+        }
+        echo "====";
+    }
+
+    fclose($pipes[0]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+
+    proc_close($process);
+
+    return [0, '', '', $index ?? 0];
+}
+
 // --- VIEWS ---
 // ================================================================================
 
