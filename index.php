@@ -6,14 +6,14 @@
  * Format: JSON Instructions
  */
 
-// function dump_highlight($variable)
-// {
-//     // Convertimos la variable a una cadena representativa
-//     $output = "<?php\n\n\$var = ".var_export($variable, true).";\n";
-//
-//     // highlight_string colorea el código y lo imprime directamente
-//     highlight_string($output);
-// }
+function dump_highlight($variable)
+{
+    // Convertimos la variable a una cadena representativa
+    $output = "<?php\n\n\$var = ".var_export($variable, true).";\n";
+
+    // highlight_string colorea el código y lo imprime directamente
+    highlight_string($output);
+}
 
 // INITS
 // ================================================================================
@@ -152,6 +152,7 @@ $router = new RegExpRouter;
 // });
 
 $router->add('/status/check', 'actionStatusCheck');
+$router->add('/status/data', 'actionStatusData');
 $router->add('/', 'actionHome');
 $router->add('/health', 'actionHealthView');
 
@@ -194,6 +195,18 @@ function actionStatusCheck()
     } else {
         $data = json_decode(file_get_contents($statusFile), true);
         echo json_encode(['finished' => isset($data['finished']) && $data['finished'] === true]);
+    }
+    exit();
+}
+
+function actionStatusData()
+{
+    global $statusFile;
+    header('Content-Type: application/json');
+    if (! file_exists($statusFile)) {
+        echo json_encode(['finished' => true]);
+    } else {
+        echo file_get_contents($statusFile);
     }
     exit();
 }
@@ -732,6 +745,12 @@ function createLogHtml($title, $bodyContent)
 HTML;
 }
 
+function updateLiveStatus($data)
+{
+    global $statusFile;
+    file_put_contents($statusFile, json_encode($data));
+}
+
 function runTasks(
     string $lofgilePath,
     string $logFilePathRaw,
@@ -747,13 +766,15 @@ function runTasks(
     $totalTaks = count($tasks);
 
     // Init status file for live view
-    file_put_contents($statusFile, json_encode([
+    $statusData = [
         'running' => true,
         'task' => 'Starting...',
         'index' => 0,
         'total' => $totalTaks,
         'start' => $startTime,
-    ]));
+        'current_output' => '',
+    ];
+    updateLiveStatus($statusData);
 
     // Change execution directory to project path
     // NOTE: replazable for the action in proc_open
@@ -775,6 +796,8 @@ function runTasks(
             'status' => 'pending',
         ];
     }
+    $statusData['history'] = $taskStatus;
+    updateLiveStatus($statusData);
 
     // Start the execution of tasks
     $descriptor = [
@@ -813,14 +836,11 @@ function runTasks(
         $commandsToRun = is_array($taskToRunCommands) ? $taskToRunCommands : [$taskToRunCommands];
 
         // Update staus file for live view
-        file_put_contents($statusFile, json_encode([
-            'running' => true,
-            'task' => $taskToRunName,
-            'index' => $indx + 1,
-            'total' => $totalTaks,
-            'start' => $startTime,
-            'history' => $taskStatus,
-        ]));
+        $statusData['task'] = $taskToRunName;
+        $statusData['index'] = $indx + 1;
+        $statusData['history'] = $taskStatus;
+        $statusData['current_output'] = ''; // Reset output for each task
+        updateLiveStatus($statusData);
 
         // Put separators
         $fullLog .= "\n+---------------------------------------------+\n";
@@ -860,17 +880,20 @@ function runTasks(
                     break;
                 }
 
+                $hasOutput = false;
                 foreach ($read as $stream) {
                     $line = fgets($stream);
                     if ($line === false)
                         continue;
 
+                    $hasOutput = true;
                     if ($stream === $pipes[1]) {
                         if (preg_match('/^__STDOUT_EOF__(\d+)/', $line, $m)) {
                             $exitCode = (int) $m[1];
                             $stdoutDone = true;
                         } else {
                             $stdout .= $line;
+                            $statusData['current_output'] .= $line;
                             $fullLogRaw .= '['.date('Y-m-d H:i:s')."][info  ] $line";
                             $htmlLogContent .= htmlspecialchars($line);
 
@@ -882,6 +905,7 @@ function runTasks(
                             $stderrDone = true;
                         } else {
                             $stderr .= $line;
+                            $statusData['current_output'] .= $line;
                             $fullLogRaw .= '['.date('Y-m-d H:i:s')."][error ] $line";
                             $htmlLogContent .= "<span style='color:red;'>".htmlspecialchars($line).'</span>';
 
@@ -889,6 +913,10 @@ function runTasks(
                             // if ($onOutput) $onOutput('stderr', rtrim($line), $cmd);
                         }
                     }
+                }
+
+                if ($hasOutput) {
+                    updateLiveStatus($statusData);
                 }
             }
 
@@ -909,13 +937,10 @@ function runTasks(
             $failedTask = $taskToRunName;
             $taskStatus[$indx]['status'] = 'failed';
             // Guardamos el último estado antes de salir por error
-            file_put_contents($statusFile, json_encode([
-                'running' => false, // Detener animación en live si falló
-                'task' => "FAILED: $taskToRunName",
-                'index' => $indx + 1,
-                'total' => $totalTaks,
-                'history' => $taskStatus,
-            ]));
+            $statusData['running'] = false;
+            $statusData['task'] = "FAILED: $taskToRunName";
+            $statusData['history'] = $taskStatus;
+            updateLiveStatus($statusData);
             break;
         }
     }
@@ -936,18 +961,18 @@ function runTasks(
     file_put_contents($logFilePathHTML, createLogHtml("Deployment Log - $taskToRunName", $htmlLogContent));
 
     // Update status
-    file_put_contents($statusFile, json_encode([
+    updateLiveStatus([
         'running' => false,
         'finished' => true,
-        'success' => $taskSuccess,
-        'task' => $taskSuccess ? 'Deployment Finished Successfully' : 'Deployment Failed',
+        'success' => $success,
+        'task' => $success ? 'Deployment Finished Successfully' : 'Deployment Failed',
         'index' => $indx + 1,
         'total' => $totalTaks,
         'start' => $startTime,
         'duration' => $duration,
         'history' => $taskStatus,
         'log_file' => basename($lofgilePath),
-    ]));
+    ]);
 
     $protocol = isset($_SERVER['HTTPS']) ? 'https://' : 'http://';
     $host = defined('CLI_HOST') ? CLI_HOST : $_SERVER['HTTP_HOST'] ?? 'localhost';
@@ -1352,113 +1377,161 @@ function renderLiveStatus()
         exit();
     }
     $data = json_decode(file_get_contents($statusFile), true);
-    $isFinished = isset($data['finished']) && $data['finished'] === true;
     ?>
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
-            <?php if (! $isFinished): ?>
-            <meta http-equiv="refresh" content="2">
-            <?php endif; ?>
         <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
         <title>Execution Status</title>
         <?= renderHeadImports() ?>
+        <script>
+            async function updateStatus() {
+                try {
+                    const response = await fetch('/status/data');
+                    const data = await response.json();
+                    
+                    // Update task name and progress
+                    document.getElementById('current-task').textContent = data.task;
+                    document.getElementById('progress-text').textContent = `${data.index}/${data.total}`;
+                    
+                    // Update progress bar
+                    const progressPercent = data.running || data.finished ? (data.index / data.total) * 100 : ((data.index - 1) / data.total) * 100;
+                    document.getElementById('progress-bar').style.width = progressPercent + '%';
+
+                    // Update history
+                    const historyContainer = document.getElementById('history-container');
+                    historyContainer.innerHTML = '';
+                    data.history.forEach((item, i) => {
+                        const status = item.status;
+                        const name = item.name;
+
+                        let badgeClass = '';
+                        let label = '';
+                        let rowClass = 'border-transparent';
+                        let bounce = '';
+
+                        switch(status) {
+                            case 'success':
+                                badgeClass = 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20';
+                                label = 'DONE';
+                                break;
+                            case 'failed':
+                                badgeClass = 'bg-rose-500/10 text-rose-500 border-rose-500/20 animate-pulse';
+                                label = 'FAIL';
+                                break;
+                            case 'running':
+                                badgeClass = 'bg-blue-500/10 text-blue-500 border-blue-500/40 border';
+                                label = 'BUSY';
+                                rowClass = 'border-blue-500/20 bg-blue-500/5';
+                                bounce = `<div class="flex gap-1">
+                                            <span class="w-1 h-1 bg-blue-500 rounded-full animate-bounce"></span>
+                                            <span class="w-1 h-1 bg-blue-500 rounded-full animate-bounce [animation-delay:0.2s]"></span>
+                                            <span class="w-1 h-1 bg-blue-500 rounded-full animate-bounce [animation-delay:0.4s]"></span>
+                                          </div>`;
+                                break;
+                            default:
+                                badgeClass = 'bg-slate-100 dark:bg-slate-800/50 text-slate-400 border-transparent';
+                                label = 'WAIT';
+                        }
+
+                        const textClass = status === 'running' ? 'text-slate-900 dark:text-white font-bold' : (status === 'pending' ? 'text-slate-500' : 'text-slate-700 dark:text-slate-400');
+
+                        historyContainer.innerHTML += `
+                            <div class="flex items-center justify-between p-3 rounded-lg border ${rowClass} transition-all">
+                                <div class="flex items-center gap-3">
+                                    <span class="text-[10px] px-2 py-0.5 rounded font-bold border uppercase ${badgeClass}">
+                                        ${label}
+                                    </span>
+                                    <span class="text-xs ${textClass}">
+                                        ${name}
+                                    </span>
+                                </div>
+                                ${bounce}
+                            </div>
+                        `;
+                    });
+
+                    // Update output terminal
+                    const outputTerminal = document.getElementById('output-terminal');
+                    if (data.current_output) {
+                        outputTerminal.textContent = data.current_output;
+                        outputTerminal.scrollTop = outputTerminal.scrollHeight;
+                    }
+
+                    // Update footer and status messages
+                    const statusText = document.getElementById('status-text');
+                    if (data.running) {
+                        statusText.textContent = 'System executing instructions...';
+                    } else {
+                        statusText.textContent = 'Process halted. Check logs.';
+                    }
+
+                    if (data.finished) {
+                        const resultContainer = document.getElementById('result-container');
+                        resultContainer.classList.remove('hidden');
+                        resultContainer.className = `mb-6 p-4 rounded-lg border ${data.success ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500' : 'bg-rose-500/10 border-rose-500/20 text-rose-500'} flex justify-between items-center uppercase text-[10px] font-bold tracking-widest`;
+                        resultContainer.innerHTML = `<span>${data.success ? '✓ Deployment Completed' : '✕ Deployment Failed'}</span><span>Duration: ${data.duration}s</span>`;
+                        
+                        document.getElementById('action-buttons').innerHTML = `
+                            <a href="/health" class="bg-slate-800 text-white px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-700 transition">BACK TO DASHBOARD</a>
+                            <a href="/log/view?file=${encodeURIComponent(data.log_file)}" class="border border-slate-200 dark:border-slate-800 px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition">VIEW FULL LOG</a>
+                        `;
+                        
+                        // Stop polling if finished
+                        clearInterval(pollInterval);
+                    }
+
+                } catch (error) {
+                    console.error('Error fetching status:', error);
+                }
+            }
+
+            const pollInterval = setInterval(updateStatus, 1000);
+            window.onload = updateStatus;
+        </script>
     </head>
     <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-400 min-h-screen flex items-center justify-center font-mono p-6 transition-colors duration-200">
-        <div class="w-full max-w-2xl p-8 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl">
+        <div class="w-full max-w-3xl p-8 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl">
             
             <div class="mb-8 flex justify-between items-end border-b border-slate-100 dark:border-slate-800 pb-6">
                 <div>
                     <div class="text-[10px] text-slate-400 dark:text-slate-500 mb-1 uppercase tracking-[0.2em]">Current Progress</div>
-                    <div class="text-xl text-slate-900 dark:text-white font-bold tracking-tight">
+                    <div id="current-task" class="text-xl text-slate-900 dark:text-white font-bold tracking-tight">
                         <?= $data['task'] ?>
                     </div>
                 </div>
                 <div class="text-right">
-                    <span class="text-2xl font-black text-slate-200 dark:text-slate-800"><?= $data['index'] ?>/<?= $data['total'] ?></span>
+                    <span id="progress-text" class="text-2xl font-black text-slate-200 dark:text-slate-800"><?= $data['index'] ?>/<?= $data['total'] ?></span>
                 </div>
             </div>
 
-            <div class="space-y-3 mb-8">
-                <?php foreach ($data['history'] as $i => $item):
-                    $status = $item['status'];
-                    $name = $item['name'];
+            <div id="history-container" class="space-y-3 mb-8">
+                <!-- History items will be inserted here by JS -->
+            </div>
 
-                    // Definición de estilos por estado
-                    $badgeClass = match ($status) {
-                        'success' => 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
-                        'failed' => 'bg-rose-500/10 text-rose-500 border-rose-500/20 animate-pulse',
-                        'running' => 'bg-blue-500/10 text-blue-500 border-blue-500/40 border',
-                        default => 'bg-slate-100 dark:bg-slate-800/50 text-slate-400 border-transparent',
-                    };
-
-                    $label = match ($status) {
-                        'success' => 'DONE',
-                        'failed' => 'FAIL',
-                        'running' => 'BUSY',
-                        default => 'WAIT',
-                    };
-                    ?>
-                    <div class="flex items-center justify-between p-3 rounded-lg border <?= $status === 'running'
-                        ? 'border-blue-500/20 bg-blue-500/5'
-                        : 'border-transparent' ?> transition-all">
-                        <div class="flex items-center gap-3">
-                            <span class="text-[10px] px-2 py-0.5 rounded font-bold border uppercase <?= $badgeClass ?>">
-                                <?= $label ?>
-                            </span>
-                            <span class="text-xs <?= $status === 'running'
-                                ? 'text-slate-900 dark:text-white font-bold'
-                                : ($status === 'pending' ? 'text-slate-500' : 'text-slate-700 dark:text-slate-400') ?>">
-                                <?= $name ?>
-                            </span>
-                        </div>
-                        <?php if ($status === 'running'): ?>
-                            <div class="flex gap-1">
-                                <span class="w-1 h-1 bg-blue-500 rounded-full animate-bounce"></span>
-                                <span class="w-1 h-1 bg-blue-500 rounded-full animate-bounce [animation-delay:0.2s]"></span>
-                                <span class="w-1 h-1 bg-blue-500 rounded-full animate-bounce [animation-delay:0.4s]"></span>
-                            </div>
-                        <?php endif; ?>
-                    </div>
-                <?php endforeach; ?>
+            <div class="mb-8">
+                <div class="text-[10px] text-slate-400 dark:text-slate-500 mb-2 uppercase tracking-[0.2em]">Real-time Output</div>
+                <pre id="output-terminal" class="w-full h-48 overflow-y-auto p-4 bg-slate-900 text-slate-300 text-[10px] rounded-lg border border-slate-800 font-mono"></pre>
             </div>
 
             <div class="relative pt-1">
                 <div class="overflow-hidden h-1.5 mb-4 text-xs flex rounded bg-slate-100 dark:bg-slate-900">
-                    <div style="width:<?= $data['running'] ?? true ? (($data['index'] - 1) / $data['total']) * 100 : 100 ?>%" class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-blue-600 transition-all duration-500"></div>
+                    <div id="progress-bar" style="width:<?= (($data['index'] - 1) / $data['total']) * 100 ?>%" class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-blue-600 transition-all duration-500"></div>
                 </div>
             </div>
             
-            <div class="flex justify-between items-center">
-                <p class="text-[9px] text-slate-400 dark:text-slate-600 uppercase tracking-widest italic">
-                    <?php if ($data['running'] ?? true): ?>
-                        System executing instructions...
-                    <?php else: ?>
-                        Process halted. Check logs.
-                    <?php endif; ?>
+            <div class="flex justify-between items-center mb-6">
+                <p id="status-text" class="text-[9px] text-slate-400 dark:text-slate-600 uppercase tracking-widest italic">
+                    System executing instructions...
                 </p>
                 <a href="/health" class="text-[10px] text-blue-500 hover:underline">Exit Live View</a>
             </div>
 
-            <?php if ($isFinished): ?>
-                <div class="mb-6 p-4 rounded-lg border <?= $data['success']
-                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500'
-                    : 'bg-rose-500/10 border-rose-500/20 text-rose-500' ?> flex justify-between items-center uppercase text-[10px] font-bold tracking-widest">
-                    <span><?= $data['success'] ? '✓ Deployment Completed' : '✕ Deployment Failed' ?></span>
-                    <span>Duration: <?= $data['duration'] ?>s</span>
-                </div>
-            <?php endif; ?>
+            <div id="result-container" class="hidden"></div>
 
-            <div class="mt-8 flex justify-between items-center border-t border-slate-100 dark:border-slate-800 pt-6">
-                <?php if ($isFinished): ?>
-                    <div class="flex gap-4">
-                        <a href="/health" class="bg-slate-800 text-white px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-700 transition">BACK TO DASHBOARD</a>
-                        <a href="/log/view?file=<?= urlencode($data['log_file']) ?>" class="border border-slate-200 dark:border-slate-800 px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition">VIEW FULL LOG</a>
-                    </div>
-                <?php else: ?>
-                    <p class="text-[9px] text-slate-400 italic animate-pulse tracking-widest">SYNCING WITH SERVER...</p>
-                <?php endif; ?>
+            <div id="action-buttons" class="mt-8 flex justify-between items-center border-t border-slate-100 dark:border-slate-800 pt-6">
+                <p class="text-[9px] text-slate-400 italic animate-pulse tracking-widest">SYNCING WITH SERVER...</p>
             </div>
         </div>
     </body>
