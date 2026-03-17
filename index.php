@@ -235,6 +235,13 @@ function actionWebhookDeploy()
     }
 
     if (isset($_GET['manual']) && $_GET['manual'] == '1') {
+        // Validate configuration before executing
+        $validationError = validateDeploymentConfig();
+        if ($validationError) {
+            renderValidationError($validationError);
+            exit();
+        }
+
         // Ejecutamos el script de despliegue en segundo plano
         // exec('php '.__FILE__.' run-deploy > /dev/null 2>&1 &');
 
@@ -402,6 +409,77 @@ function convertYmlToJson($ymlPath)
     }
 
     return trim($output);
+}
+
+function validateYqlPathForYml()
+{
+    global $config;
+    $instructionsFile = $config['instructions'];
+    
+    // Check if it's a YML file
+    if (strtolower(pathinfo($instructionsFile, PATHINFO_EXTENSION)) === 'yml' 
+        || strtolower(pathinfo($instructionsFile, PATHINFO_EXTENSION)) === 'yaml') {
+        $yqPath = env('YQ_PATH');
+        if (! $yqPath) {
+            return 'YQ_PATH environment variable is not set. Required for processing YAML files.';
+        }
+        // Check if yq binary exists
+        $testCmd = escapeshellcmd("$yqPath --version");
+        $testOutput = shell_exec($testCmd.' 2>&1');
+        if ($testOutput === null || $testOutput === false || stripos($testOutput, 'yq') === false) {
+            return "YQ binary not found at path: $yqPath";
+        }
+    }
+    return null;
+}
+
+function validateDeploymentConfig()
+{
+    global $config;
+
+    // Validate required config variables
+    $requiredVars = [
+        'project_path' => $config['project_path'],
+        'instructions' => $config['instructions'],
+    ];
+    foreach ($requiredVars as $label => $value) {
+        if (empty($value) || ! file_exists($value) && $label === 'project_path') {
+            return "Error: Invalid or missing configuration: $label";
+        }
+    }
+
+    // Validate instructions file exists
+    if (! file_exists($config['instructions'])) {
+        return 'Instruction file not found at: '.$config['instructions'];
+    }
+
+    // Validate YQL path if YML is used
+    $yqlError = validateYqlPathForYml();
+    if ($yqlError) {
+        return $yqlError;
+    }
+
+    // Validate instructions content
+    $jsonContent = getInstructionsContent();
+    if ($jsonContent === null || $jsonContent === false) {
+        return 'Failed to read or convert instructions file.';
+    }
+
+    $tasks = json_decode($jsonContent, true);
+    if (is_null($tasks)) {
+        return 'Invalid JSON format in instructions file.';
+    }
+
+    $errInstructions = validateInstructions($tasks);
+    if ($errInstructions !== true) {
+        return "Invalid task instructions: $errInstructions";
+    }
+
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        return 'JSON error in instructions file: '.json_last_error_msg();
+    }
+
+    return null;
 }
 
 function getInstructionsContent()
@@ -1151,6 +1229,67 @@ function showSpecificLog($file, $type = 'text/plain')
         readfile($path);
     } else
         exit('Access Denied');
+}
+
+function renderValidationError($errorMessage)
+{
+    ?>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+        <title>Deployment Configuration Error</title>
+        <?= renderHeadImports() ?>
+    </head>
+    <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-300 p-8 font-mono text-sm transition-colors duration-200">
+        <div class="max-w-2xl mx-auto">
+            <div class="mt-8 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-500/50 p-8 rounded-lg shadow-lg dark:shadow-xl">
+                <div class="flex items-start gap-4">
+                    <div class="text-4xl">❌</div>
+                    <div class="flex-1">
+                        <h1 class="text-xl font-bold text-rose-900 dark:text-rose-100 mb-4">Deployment Configuration Error</h1>
+                        <p class="text-rose-800 dark:text-rose-200 mb-6 leading-relaxed">
+                            <?= htmlspecialchars($errorMessage, ENT_QUOTES, 'UTF-8') ?>
+                        </p>
+                        <div class="flex gap-3">
+                            <a href="/health" class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded text-sm font-bold transition">
+                                Back to Dashboard
+                            </a>
+                            <button onclick="window.history.back()" class="border border-rose-300 dark:border-rose-500/50 hover:bg-rose-50 dark:hover:bg-rose-900/30 text-rose-700 dark:text-rose-200 px-4 py-2 rounded text-sm font-bold transition">
+                                Go Back
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-8 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-6 rounded-lg shadow-sm dark:shadow-xl">
+                <h2 class="text-slate-400 dark:text-slate-500 text-[10px] font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">Common Issues & Solutions</h2>
+                <div class="space-y-4 text-sm">
+                    <div>
+                        <h3 class="font-bold text-slate-700 dark:text-slate-300 mb-2">Missing YQ_PATH Variable</h3>
+                        <p class="text-slate-600 dark:text-slate-400 mb-2">If using a YAML file (deploy.yml), you need to set the YQ_PATH environment variable:</p>
+                        <pre class="bg-slate-50 dark:bg-slate-950 p-3 rounded text-xs border border-slate-200 dark:border-slate-800">YQ_PATH=/usr/bin/yq</pre>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-slate-700 dark:text-slate-300 mb-2">Invalid Instructions Format</h3>
+                        <p class="text-slate-600 dark:text-slate-400 mb-2">Check your deploy.json or deploy.yml file format:</p>
+                        <pre class="bg-slate-50 dark:bg-slate-950 p-3 rounded text-xs border border-slate-200 dark:border-slate-800">[
+  { "name": "Task 1", "run": "command" },
+  { "name": "Task 2", "run": "command" }
+]</pre>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-slate-700 dark:text-slate-300 mb-2">Missing Configuration</h3>
+                        <p class="text-slate-600 dark:text-slate-400">Ensure your .env file has INSTRUCTIONS_FILE and PROJECT_PATH set correctly.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    <?php
 }
 
 function showLastLog()
