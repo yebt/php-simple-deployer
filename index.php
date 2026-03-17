@@ -1688,6 +1688,13 @@ function renderLiveStatus()
                     }
 
                     // Update history with expandable outputs
+                    // Save current state of open collapsibles
+                    document.querySelectorAll('#history-container > div > div[id^="task-output-"]').forEach(el => {
+                        if (!el.classList.contains('hidden')) {
+                            openCollapsibles.add(el.id);
+                        }
+                    });
+
                     const historyContainer = document.getElementById('history-container');
                     historyContainer.innerHTML = '';
                     data.history.forEach((item, i) => {
@@ -1727,10 +1734,11 @@ function renderLiveStatus()
                         const textClass = status === 'running' ? 'text-slate-900 dark:text-white font-bold' : (status === 'pending' ? 'text-slate-500' : 'text-slate-700 dark:text-slate-400');
                         const toggleId = `task-output-${i}`;
                         const isRunning = status === 'running';
+                        const isOpen = openCollapsibles.has(toggleId);
 
                         historyContainer.innerHTML += `
                             <div class="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
-                                <button onclick="document.getElementById('${toggleId}').classList.toggle('hidden'); this.querySelector('.toggle-arrow').classList.toggle('rotate-180')" class="w-full flex items-center justify-between p-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
+                                <button onclick="document.getElementById('${toggleId}').classList.toggle('hidden'); this.querySelector('.toggle-arrow').classList.toggle('rotate-180'); if (document.getElementById('${toggleId}').classList.contains('hidden')) { openCollapsibles.delete('${toggleId}'); } else { openCollapsibles.add('${toggleId}'); }" class="w-full flex items-center justify-between p-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
                                     <div class="flex items-center gap-3">
                                         <span class="text-[10px] px-2 py-0.5 rounded font-bold border uppercase ${badgeClass}">
                                             ${label}
@@ -1741,12 +1749,12 @@ function renderLiveStatus()
                                     </div>
                                     <div class="flex items-center gap-2">
                                         ${bounce}
-                                        <svg class="toggle-arrow w-4 h-4 text-slate-400 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <svg class="toggle-arrow w-4 h-4 text-slate-400 transition-transform ${isOpen ? '' : 'rotate-180'}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path>
                                         </svg>
                                     </div>
                                 </button>
-                                <div id="${toggleId}" class="hidden bg-slate-50 dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-700 p-3">
+                                <div id="${toggleId}" class="${isOpen ? '' : 'hidden'} bg-slate-50 dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-700 p-3">
                                     <pre class="text-[10px] text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-950 p-3 rounded border border-slate-200 dark:border-slate-800 overflow-x-auto max-h-64 overflow-y-auto font-mono whitespace-pre-wrap break-words">${output || '(no output)'}</pre>
                                 </div>
                             </div>
@@ -1808,6 +1816,9 @@ function renderLiveStatus()
                     alert('Error stopping deployment');
                 }
             }
+
+            // Track which collapsibles are open
+            const openCollapsibles = new Set();
 
             const pollInterval = setInterval(updateStatus, 1000);
             window.onload = updateStatus;
