@@ -29,5 +29,16 @@
     echo "Inicio"
     export NODE_ENV=production
     echo "Environment: $NODE_ENV"
+
     mkdir -p release/build
+
+    # Loop + condicional
+    for i in 1 2 3 4 5; do
+      if [ $i -eq 3 ]; then
+        echo "i=$i -> punto especial"
+      else
+        echo "i=$i"
+      fi
+    done
+
     echo "Fin"
