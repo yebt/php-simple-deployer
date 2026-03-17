@@ -398,18 +398,30 @@ function validateInstructions($tasks)
 
 function convertYmlToJson($ymlPath)
 {
-    // $yqPath = env('YQ_PATH', 'yq');
     $yqPath = env('YQ_PATH');
 
-    // Execute yq to convert YML to JSON
-    $cmd = escapeshellcmd("$yqPath -o=json '$ymlPath'");
+    // Execute yq to convert YML to JSON with error output
+    $cmd = escapeshellcmd("$yqPath -o=json '$ymlPath' 2>&1");
     $output = shell_exec($cmd);
 
     if ($output === null || $output === false) {
         return null;
     }
 
-    return trim($output);
+    $trimmed = trim($output);
+    
+    // Check if there's an error in the output
+    if (stripos($trimmed, 'error') !== false || stripos($trimmed, 'failed') !== false) {
+        return null;
+    }
+
+    // Validate that output is valid JSON
+    json_decode($trimmed, true);
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        return null;
+    }
+
+    return $trimmed;
 }
 
 function validateYqlPathForYml()
@@ -463,12 +475,18 @@ function validateDeploymentConfig()
     // Validate instructions content
     $jsonContent = getInstructionsContent();
     if ($jsonContent === null || $jsonContent === false) {
+        $instructionsFile = $config['instructions'];
+        $ext = strtolower(pathinfo($instructionsFile, PATHINFO_EXTENSION));
+        if ($ext === 'yml' || $ext === 'yaml') {
+            return 'Failed to convert YAML to JSON. Check YQL binary or YAML syntax.';
+        }
         return 'Failed to read or convert instructions file.';
     }
 
     $tasks = json_decode($jsonContent, true);
     if (is_null($tasks)) {
-        return 'Invalid JSON format in instructions file.';
+        $jsonError = json_last_error_msg();
+        return "Invalid JSON format in instructions file: $jsonError";
     }
 
     $errInstructions = validateInstructions($tasks);
@@ -982,28 +1000,43 @@ function runTasks(
             $fullLog .= "\n[CMD]: $cmd\n";
             $fullLogRaw .= '['.date('Y-m-d H:i:s')."] $cmd\n";
             $htmlLogContent .= "<h3>Command: $cmd</h3>\n";
-            // $htmlLogContent .= "<pre style='background:#f0f0f0;padding:10px;border-radius:5px;'><code>$cmd</code></pre>\n";
 
-            // __STDOUT_EOF__ y __STDERR_EOF__ print to finish
+            // Wrap multiline scripts properly
             $wrapped = sprintf(
-                "%s ; __exit__=$? ; echo __STDOUT_EOF__\$__exit__ ; echo __STDERR_EOF__\$__exit__ >&2\n",
-                $cmd,
+                "{\n%s\n}\n__exit__=$?\necho '__STDOUT_EOF__'\"$__exit__\"\necho '__STDERR_EOF__'\"$__exit__\" >&2\n",
+                $cmd
             );
             fwrite($pipes[0], $wrapped); // Send command to shell
 
             $stdoutDone = false;
             $stderrDone = false;
             $exitCode = 0; // Success by default
+            $timeoutCounter = 0;
+            $maxTimeoutIterations = 100; // ~500 seconds max per command
 
-            // echo "Output:<br><pre style='background:#f0f0f0;padding:10px;border-radius:5px;'>";
             $htmlLogContent .= "<pre style='background:#f0f0f0;padding:10px;border-radius:5px;'><code>";
             while (! $stdoutDone || ! $stderrDone) {
                 $read = array_filter([$pipes[1], $pipes[2]]);
                 $write = null;
                 $except = null;
 
-                if (stream_select($read, $write, $except, 5) === false) {
+                $streamResult = stream_select($read, $write, $except, 5);
+                
+                if ($streamResult === false) {
+                    // stream_select error
+                    $stderr .= "[ERROR] stream_select failed\n";
                     break;
+                }
+
+                if ($streamResult === 0) {
+                    // Timeout occurred
+                    $timeoutCounter++;
+                    if ($timeoutCounter >= $maxTimeoutIterations) {
+                        $stderr .= "[ERROR] Command timeout after 500 seconds\n";
+                        $exitCode = 124; // Standard timeout exit code
+                        break;
+                    }
+                    continue;
                 }
 
                 $hasOutput = false;
@@ -1014,7 +1047,8 @@ function runTasks(
 
                     $hasOutput = true;
                     if ($stream === $pipes[1]) {
-                        if (preg_match('/^__STDOUT_EOF__(\d+)/', $line, $m)) {
+                        // Match __STDOUT_EOF__123 format
+                        if (preg_match('/^__STDOUT_EOF__(.*)$/', trim($line), $m)) {
                             $exitCode = (int) $m[1];
                             $stdoutDone = true;
                         } else {
@@ -1022,27 +1056,27 @@ function runTasks(
                             $statusData['current_output'] .= $line;
                             $fullLogRaw .= '['.date('Y-m-d H:i:s')."][info  ] $line";
                             $htmlLogContent .= htmlspecialchars($line);
-
-                            // echo '[OUT] '.$line;
-                            // if ($onOutput) $onOutput('stdout', rtrim($line), $cmd);
                         }
                     } else {
-                        if (preg_match('/^__STDERR_EOF__(\d+)/', $line, $m)) {
+                        // Match __STDERR_EOF__123 format
+                        if (preg_match('/^__STDERR_EOF__(.*)$/', trim($line), $m)) {
                             $stderrDone = true;
                         } else {
                             $stderr .= $line;
                             $statusData['current_output'] .= $line;
                             $fullLogRaw .= '['.date('Y-m-d H:i:s')."][error ] $line";
                             $htmlLogContent .= "<span style='color:red;'>".htmlspecialchars($line).'</span>';
-
-                            // echo '[ERR] '.$line;
-                            // if ($onOutput) $onOutput('stderr', rtrim($line), $cmd);
                         }
                     }
                 }
 
                 if ($hasOutput) {
                     updateLiveStatus($statusData);
+                }
+                
+                // Reset timeout counter if we got output
+                if ($hasOutput) {
+                    $timeoutCounter = 0;
                 }
             }
 
