@@ -35,3 +35,4 @@ phpcs.xml
 .php-cs-fixer.cache
 .env
 logs
+yq_linux_amd64

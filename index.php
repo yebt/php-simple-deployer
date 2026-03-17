@@ -5,6 +5,7 @@
  * Minimalist Technical UI - PHP 8.5+
  * Format: JSON Instructions
  */
+
 function dump_highlight($variable)
 {
     // Convertimos la variable a una cadena representativa
@@ -151,6 +152,7 @@ $router = new RegExpRouter;
 // });
 
 $router->add('/status/check', 'actionStatusCheck');
+$router->add('/status/data', 'actionStatusData');
 $router->add('/', 'actionHome');
 $router->add('/health', 'actionHealthView');
 
@@ -165,7 +167,10 @@ $router->add('/log/rview/([a-zA-Z0-9_]+)', 'actionLogRawView');
 $router->add('/log/bview/([a-zA-Z0-9_]+)', 'actionLogBaseRawView');
 $router->add('/log/htmlview/([a-zA-Z0-9_]+)', 'actionLogHtmlView');
 $router->add('/log/last', 'actionLogLast');
+// $router->add('/latest', 'actionLogLatestHtml');
+$router->add('/log/lasthtml', 'actionLogLatestHtml');
 $router->add('/status/live', 'actionStatusLive');
+$router->add('/deploy/stop', 'actionDeployStop');
 $router->add('/test-notify', 'actionNotifyTest');
 $router->add('/clear-history', 'actionClearHistory');
 
@@ -197,6 +202,18 @@ function actionStatusCheck()
     exit();
 }
 
+function actionStatusData()
+{
+    global $statusFile;
+    header('Content-Type: application/json');
+    if (! file_exists($statusFile)) {
+        echo json_encode(['finished' => true]);
+    } else {
+        echo file_get_contents($statusFile);
+    }
+    exit();
+}
+
 function actionHome()
 {
     header('Location: /health');
@@ -219,6 +236,13 @@ function actionWebhookDeploy()
     }
 
     if (isset($_GET['manual']) && $_GET['manual'] == '1') {
+        // Validate configuration before executing
+        $validationError = validateDeploymentConfig();
+        if ($validationError) {
+            renderValidationError($validationError);
+            exit();
+        }
+
         // Ejecutamos el script de despliegue en segundo plano
         // exec('php '.__FILE__.' run-deploy > /dev/null 2>&1 &');
 
@@ -289,6 +313,11 @@ function actionLogLast()
     showLastLog();
 }
 
+function actionLogLatestHtml()
+{
+    showLastLogHtml();
+}
+
 function actionStatusLive()
 {
     renderLiveStatus();
@@ -321,6 +350,49 @@ MARKDOWN
 function actionClearHistory()
 {
     clearHistory();
+}
+
+function actionDeployStop()
+{
+    global $statusFile;
+    
+    // Security check
+    validateSecurity();
+    
+    // Check if there's a deployment running
+    if (!file_exists($statusFile)) {
+        http_response_code(400);
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'message' => 'No deployment in progress']);
+        exit();
+    }
+    
+    $statusData = json_decode(file_get_contents($statusFile), true);
+    
+    // Check if it's actually running
+    if (!isset($statusData['running']) || !$statusData['running']) {
+        http_response_code(400);
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'message' => 'No deployment running']);
+        exit();
+    }
+    
+    // Kill all PHP processes that are running deployment
+    // This will catch the shell process (stdbuf -o0 -e0 bash)
+    $cmd = "pkill -f 'stdbuf -o0 -e0 bash' || pkill -P $$ 2>/dev/null";
+    shell_exec($cmd);
+    
+    // Update status to stopped
+    $statusData['running'] = false;
+    $statusData['finished'] = true;
+    $statusData['stopped_at'] = date('Y-m-d H:i:s');
+    $statusData['task'] = 'DEPLOYMENT STOPPED BY USER';
+    
+    file_put_contents($statusFile, json_encode($statusData));
+    
+    header('Content-Type: application/json');
+    echo json_encode(['success' => true, 'message' => 'Deployment stopped']);
+    exit();
 }
 
 // --- LOGIC ---
@@ -368,10 +440,161 @@ function validateInstructions($tasks)
     return true;
 }
 
+function convertYmlToJson($ymlPath)
+{
+    $yqPath = env('YQ_PATH');
+
+    // Execute yq to convert YML to JSON with error output
+    $cmd = escapeshellcmd("$yqPath -o=json '$ymlPath' 2>&1");
+    $output = shell_exec($cmd);
+
+    if ($output === null || $output === false) {
+        return null;
+    }
+
+    $trimmed = trim($output);
+    
+    // Check if there's an error in the output
+    if (stripos($trimmed, 'error') !== false || stripos($trimmed, 'failed') !== false) {
+        return null;
+    }
+
+    // Validate that output is valid JSON
+    json_decode($trimmed, true);
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        return null;
+    }
+
+    return $trimmed;
+}
+
+function validateYqlPathForYml()
+{
+    global $config;
+    $instructionsFile = $config['instructions'];
+    
+    // Check if it's a YML file
+    if (strtolower(pathinfo($instructionsFile, PATHINFO_EXTENSION)) === 'yml' 
+        || strtolower(pathinfo($instructionsFile, PATHINFO_EXTENSION)) === 'yaml') {
+        $yqPath = env('YQ_PATH');
+        if (! $yqPath) {
+            return 'YQ_PATH environment variable is not set. Required for processing YAML files.';
+        }
+        
+        // Check if yq binary exists
+        if (!file_exists($yqPath)) {
+            return "YQ binary not found at path: $yqPath";
+        }
+        
+        // Check if it's a regular file
+        if (!is_file($yqPath)) {
+            return "YQ path is not a regular file: $yqPath";
+        }
+        
+        // Check if it's executable, if not try to fix it
+        if (!is_executable($yqPath)) {
+            // Try to make it executable
+            if (@chmod($yqPath, 0755)) {
+                echo "[INFO] YQ binary permissions fixed: chmod +x applied to $yqPath\n";
+            } else {
+                return "YQ binary is not executable and cannot fix permissions. Run: chmod +x $yqPath";
+            }
+        }
+        
+        // Verify yq works by running version command
+        $testCmd = escapeshellcmd("$yqPath --version");
+        $testOutput = shell_exec($testCmd.' 2>&1');
+        if ($testOutput === null || $testOutput === false || stripos($testOutput, 'yq') === false) {
+            return "YQ binary not working at path: $yqPath";
+        }
+    }
+    return null;
+}
+
+function validateDeploymentConfig()
+{
+    global $config;
+
+    // Validate required config variables
+    $requiredVars = [
+        'project_path' => $config['project_path'],
+        'instructions' => $config['instructions'],
+    ];
+    foreach ($requiredVars as $label => $value) {
+        if (empty($value) || ! file_exists($value) && $label === 'project_path') {
+            return "Error: Invalid or missing configuration: $label";
+        }
+    }
+
+    // Validate instructions file exists
+    if (! file_exists($config['instructions'])) {
+        return 'Instruction file not found at: '.$config['instructions'];
+    }
+
+    // Validate YQL path if YML is used
+    $yqlError = validateYqlPathForYml();
+    if ($yqlError) {
+        return $yqlError;
+    }
+
+    // Validate instructions content
+    $jsonContent = getInstructionsContent();
+    if ($jsonContent === null || $jsonContent === false) {
+        $instructionsFile = $config['instructions'];
+        $ext = strtolower(pathinfo($instructionsFile, PATHINFO_EXTENSION));
+        if ($ext === 'yml' || $ext === 'yaml') {
+            return 'Failed to convert YAML to JSON. Check YQL binary or YAML syntax.';
+        }
+        return 'Failed to read or convert instructions file.';
+    }
+
+    $tasks = json_decode($jsonContent, true);
+    if (is_null($tasks)) {
+        $jsonError = json_last_error_msg();
+        return "Invalid JSON format in instructions file: $jsonError";
+    }
+
+    $errInstructions = validateInstructions($tasks);
+    if ($errInstructions !== true) {
+        return "Invalid task instructions: $errInstructions";
+    }
+
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        return 'JSON error in instructions file: '.json_last_error_msg();
+    }
+
+    return null;
+}
+
+function getInstructionsContent()
+{
+    global $config;
+    $instructionsFile = $config['instructions'];
+
+    // Check if it's a YML file
+    if (
+        strtolower(pathinfo($instructionsFile, PATHINFO_EXTENSION)) === 'yml'
+        || strtolower(pathinfo($instructionsFile, PATHINFO_EXTENSION)) === 'yaml'
+    ) {
+        return convertYmlToJson($instructionsFile);
+    }
+
+    // Otherwise, read as JSON
+    return file_get_contents($instructionsFile);
+}
+
 function validateJsonContent()
 {
     global $config;
-    $jsonContent = file_get_contents($config['instructions']);
+    $jsonContent = getInstructionsContent();
+
+    if ($jsonContent === null || $jsonContent === false) {
+        return [
+            'Deployment started. Processing instructions...',
+            'Failed to read or convert instructions file.',
+        ];
+    }
+
     $tasks = json_decode($jsonContent, true);
     if (is_null($tasks)) {
         return [
@@ -688,7 +911,7 @@ function executeDeploymentWithSingleShellProccess()
     $logFIlePathHTML = $config['logs_path'].'/'.$logFileName.'.html';
 
     // Get tasks in the instructions file
-    $jsonContent = file_get_contents($config['instructions']);
+    $jsonContent = getInstructionsContent();
     $tasks = json_decode($jsonContent, true);
 
     runTasks($logFilePath, $logFilePathRaw, $logFIlePathHTML, $tasks);
@@ -731,6 +954,12 @@ function createLogHtml($title, $bodyContent)
 HTML;
 }
 
+function updateLiveStatus($data)
+{
+    global $statusFile;
+    file_put_contents($statusFile, json_encode($data));
+}
+
 function runTasks(
     string $lofgilePath,
     string $logFilePathRaw,
@@ -746,13 +975,15 @@ function runTasks(
     $totalTaks = count($tasks);
 
     // Init status file for live view
-    file_put_contents($statusFile, json_encode([
+    $statusData = [
         'running' => true,
         'task' => 'Starting...',
         'index' => 0,
         'total' => $totalTaks,
         'start' => $startTime,
-    ]));
+        'current_output' => '',
+    ];
+    updateLiveStatus($statusData);
 
     // Change execution directory to project path
     // NOTE: replazable for the action in proc_open
@@ -772,8 +1003,11 @@ function runTasks(
         $taskStatus[$i] = [
             'name' => $t['name'] ?? 'Task '.($i + 1),
             'status' => 'pending',
+            'output' => '',
         ];
     }
+    $statusData['history'] = $taskStatus;
+    updateLiveStatus($statusData);
 
     // Start the execution of tasks
     $descriptor = [
@@ -812,14 +1046,11 @@ function runTasks(
         $commandsToRun = is_array($taskToRunCommands) ? $taskToRunCommands : [$taskToRunCommands];
 
         // Update staus file for live view
-        file_put_contents($statusFile, json_encode([
-            'running' => true,
-            'task' => $taskToRunName,
-            'index' => $indx + 1,
-            'total' => $totalTaks,
-            'start' => $startTime,
-            'history' => $taskStatus,
-        ]));
+        $statusData['task'] = $taskToRunName;
+        $statusData['index'] = $indx + 1;
+        $statusData['history'] = $taskStatus;
+        $statusData['current_output'] = ''; // Reset output for each task
+        updateLiveStatus($statusData);
 
         // Put separators
         $fullLog .= "\n+---------------------------------------------+\n";
@@ -835,59 +1066,86 @@ function runTasks(
             $fullLog .= "\n[CMD]: $cmd\n";
             $fullLogRaw .= '['.date('Y-m-d H:i:s')."] $cmd\n";
             $htmlLogContent .= "<h3>Command: $cmd</h3>\n";
-            // $htmlLogContent .= "<pre style='background:#f0f0f0;padding:10px;border-radius:5px;'><code>$cmd</code></pre>\n";
 
-            // __STDOUT_EOF__ y __STDERR_EOF__ print to finish
+            // Wrap multiline scripts properly
             $wrapped = sprintf(
-                "%s ; __exit__=$? ; echo __STDOUT_EOF__\$__exit__ ; echo __STDERR_EOF__\$__exit__ >&2\n",
-                $cmd,
+                "{\n%s\n}\n__exit__=$?\necho '__STDOUT_EOF__'\"\$__exit__\"\necho '__STDERR_EOF__'\"\$__exit__\" >&2\n",
+                $cmd
             );
             fwrite($pipes[0], $wrapped); // Send command to shell
 
             $stdoutDone = false;
             $stderrDone = false;
             $exitCode = 0; // Success by default
+            $timeoutCounter = 0;
+            $maxTimeoutIterations = 100; // ~500 seconds max per command
 
-            // echo "Output:<br><pre style='background:#f0f0f0;padding:10px;border-radius:5px;'>";
             $htmlLogContent .= "<pre style='background:#f0f0f0;padding:10px;border-radius:5px;'><code>";
             while (! $stdoutDone || ! $stderrDone) {
                 $read = array_filter([$pipes[1], $pipes[2]]);
                 $write = null;
                 $except = null;
 
-                if (stream_select($read, $write, $except, 5) === false) {
+                $streamResult = stream_select($read, $write, $except, 5);
+                
+                if ($streamResult === false) {
+                    // stream_select error
+                    $stderr .= "[ERROR] stream_select failed\n";
                     break;
                 }
 
+                if ($streamResult === 0) {
+                    // Timeout occurred
+                    $timeoutCounter++;
+                    if ($timeoutCounter >= $maxTimeoutIterations) {
+                        $stderr .= "[ERROR] Command timeout after 500 seconds\n";
+                        $exitCode = 124; // Standard timeout exit code
+                        break;
+                    }
+                    continue;
+                }
+
+                $hasOutput = false;
                 foreach ($read as $stream) {
                     $line = fgets($stream);
                     if ($line === false)
                         continue;
 
+                    $hasOutput = true;
                     if ($stream === $pipes[1]) {
-                        if (preg_match('/^__STDOUT_EOF__(\d+)/', $line, $m)) {
+                        // Match __STDOUT_EOF__123 format
+                        if (preg_match('/^__STDOUT_EOF__(.*)$/', trim($line), $m)) {
                             $exitCode = (int) $m[1];
                             $stdoutDone = true;
                         } else {
                             $stdout .= $line;
+                            $statusData['current_output'] .= $line;
+                            $taskStatus[$indx]['output'] .= $line;
                             $fullLogRaw .= '['.date('Y-m-d H:i:s')."][info  ] $line";
                             $htmlLogContent .= htmlspecialchars($line);
-
-                            // echo '[OUT] '.$line;
-                            // if ($onOutput) $onOutput('stdout', rtrim($line), $cmd);
                         }
                     } else {
-                        if (preg_match('/^__STDERR_EOF__(\d+)/', $line, $m)) {
+                        // Match __STDERR_EOF__123 format
+                        if (preg_match('/^__STDERR_EOF__(.*)$/', trim($line), $m)) {
                             $stderrDone = true;
                         } else {
                             $stderr .= $line;
+                            $statusData['current_output'] .= $line;
+                            $taskStatus[$indx]['output'] .= $line;
                             $fullLogRaw .= '['.date('Y-m-d H:i:s')."][error ] $line";
                             $htmlLogContent .= "<span style='color:red;'>".htmlspecialchars($line).'</span>';
-
-                            // echo '[ERR] '.$line;
-                            // if ($onOutput) $onOutput('stderr', rtrim($line), $cmd);
                         }
                     }
+                }
+
+                if ($hasOutput) {
+                    $statusData['history'] = $taskStatus;
+                    updateLiveStatus($statusData);
+                }
+                
+                // Reset timeout counter if we got output
+                if ($hasOutput) {
+                    $timeoutCounter = 0;
                 }
             }
 
@@ -908,13 +1166,10 @@ function runTasks(
             $failedTask = $taskToRunName;
             $taskStatus[$indx]['status'] = 'failed';
             // Guardamos el último estado antes de salir por error
-            file_put_contents($statusFile, json_encode([
-                'running' => false, // Detener animación en live si falló
-                'task' => "FAILED: $taskToRunName",
-                'index' => $indx + 1,
-                'total' => $totalTaks,
-                'history' => $taskStatus,
-            ]));
+            $statusData['running'] = false;
+            $statusData['task'] = "FAILED: $taskToRunName";
+            $statusData['history'] = $taskStatus;
+            updateLiveStatus($statusData);
             break;
         }
     }
@@ -935,18 +1190,18 @@ function runTasks(
     file_put_contents($logFilePathHTML, createLogHtml("Deployment Log - $taskToRunName", $htmlLogContent));
 
     // Update status
-    file_put_contents($statusFile, json_encode([
+    updateLiveStatus([
         'running' => false,
         'finished' => true,
-        'success' => $taskSuccess,
-        'task' => $taskSuccess ? 'Deployment Finished Successfully' : 'Deployment Failed',
+        'success' => $success,
+        'task' => $success ? 'Deployment Finished Successfully' : 'Deployment Failed',
         'index' => $indx + 1,
         'total' => $totalTaks,
         'start' => $startTime,
         'duration' => $duration,
         'history' => $taskStatus,
         'log_file' => basename($lofgilePath),
-    ]));
+    ]);
 
     $protocol = isset($_SERVER['HTTPS']) ? 'https://' : 'http://';
     $host = defined('CLI_HOST') ? CLI_HOST : $_SERVER['HTTP_HOST'] ?? 'localhost';
@@ -1080,6 +1335,67 @@ function showSpecificLog($file, $type = 'text/plain')
         exit('Access Denied');
 }
 
+function renderValidationError($errorMessage)
+{
+    ?>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+        <title>Deployment Configuration Error</title>
+        <?= renderHeadImports() ?>
+    </head>
+    <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-300 p-8 font-mono text-sm transition-colors duration-200">
+        <div class="max-w-2xl mx-auto">
+            <div class="mt-8 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-500/50 p-8 rounded-lg shadow-lg dark:shadow-xl">
+                <div class="flex items-start gap-4">
+                    <div class="text-4xl">❌</div>
+                    <div class="flex-1">
+                        <h1 class="text-xl font-bold text-rose-900 dark:text-rose-100 mb-4">Deployment Configuration Error</h1>
+                        <p class="text-rose-800 dark:text-rose-200 mb-6 leading-relaxed">
+                            <?= htmlspecialchars($errorMessage, ENT_QUOTES, 'UTF-8') ?>
+                        </p>
+                        <div class="flex gap-3">
+                            <a href="/health" class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded text-sm font-bold transition">
+                                Back to Dashboard
+                            </a>
+                            <button onclick="window.history.back()" class="border border-rose-300 dark:border-rose-500/50 hover:bg-rose-50 dark:hover:bg-rose-900/30 text-rose-700 dark:text-rose-200 px-4 py-2 rounded text-sm font-bold transition">
+                                Go Back
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-8 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-6 rounded-lg shadow-sm dark:shadow-xl">
+                <h2 class="text-slate-400 dark:text-slate-500 text-[10px] font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">Common Issues & Solutions</h2>
+                <div class="space-y-4 text-sm">
+                    <div>
+                        <h3 class="font-bold text-slate-700 dark:text-slate-300 mb-2">Missing YQ_PATH Variable</h3>
+                        <p class="text-slate-600 dark:text-slate-400 mb-2">If using a YAML file (deploy.yml), you need to set the YQ_PATH environment variable:</p>
+                        <pre class="bg-slate-50 dark:bg-slate-950 p-3 rounded text-xs border border-slate-200 dark:border-slate-800">YQ_PATH=/usr/bin/yq</pre>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-slate-700 dark:text-slate-300 mb-2">Invalid Instructions Format</h3>
+                        <p class="text-slate-600 dark:text-slate-400 mb-2">Check your deploy.json or deploy.yml file format:</p>
+                        <pre class="bg-slate-50 dark:bg-slate-950 p-3 rounded text-xs border border-slate-200 dark:border-slate-800">[
+  { "name": "Task 1", "run": "command" },
+  { "name": "Task 2", "run": "command" }
+]</pre>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-slate-700 dark:text-slate-300 mb-2">Missing Configuration</h3>
+                        <p class="text-slate-600 dark:text-slate-400">Ensure your .env file has INSTRUCTIONS_FILE and PROJECT_PATH set correctly.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    <?php
+}
+
 function showLastLog()
 {
     global $config;
@@ -1088,6 +1404,17 @@ function showLastLog()
         exit('No logs available.');
     usort($logs, fn ($a, $b) => filemtime($b) - filemtime($a));
     header('Content-Type: text/plain');
+    readfile($logs[0]);
+}
+
+function showLastLogHtml()
+{
+    global $config;
+    $logs = glob($config['logs_path'].'/*.html');
+    if (! $logs)
+        exit('No HTML logs available.');
+    usort($logs, fn ($a, $b) => filemtime($b) - filemtime($a));
+    header('Content-Type: text/html');
     readfile($logs[0]);
 }
 
@@ -1425,114 +1752,234 @@ function renderLiveStatus()
         exit();
     }
     $data = json_decode(file_get_contents($statusFile), true);
-    $isFinished = isset($data['finished']) && $data['finished'] === true;
     ?>
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
-            <?php if (! $isFinished): ?>
-            <meta http-equiv="refresh" content="2">
-            <?php endif; ?>
         <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
         <title>Execution Status</title>
         <?= renderHeadImports() ?>
+        <script>
+            async function updateStatus() {
+                try {
+                    const response = await fetch('/status/data');
+                    const data = await response.json();
+                    
+                    // Update task name and progress
+                    document.getElementById('current-task').textContent = data.task;
+                    document.getElementById('progress-text').textContent = `${data.index}/${data.total}`;
+                    
+                    // Update progress bar
+                    const progressPercent = data.running || data.finished ? (data.index / data.total) * 100 : ((data.index - 1) / data.total) * 100;
+                    document.getElementById('progress-bar').style.width = progressPercent + '%';
+
+                    // Update stop button visibility
+                    const stopButton = document.getElementById('stop-button');
+                    if (data.running) {
+                        stopButton.classList.remove('hidden');
+                    } else {
+                        stopButton.classList.add('hidden');
+                    }
+
+                    // Update history with expandable outputs
+                    // Save current state of open collapsibles
+                    document.querySelectorAll('#history-container > div > div[id^="task-output-"]').forEach(el => {
+                        if (!el.classList.contains('hidden')) {
+                            openCollapsibles.add(el.id);
+                        }
+                    });
+
+                    const historyContainer = document.getElementById('history-container');
+                    historyContainer.innerHTML = '';
+                    data.history.forEach((item, i) => {
+                        const status = item.status;
+                        const name = item.name;
+                        const output = item.output || '';
+
+                        let badgeClass = '';
+                        let label = '';
+                        let rowClass = 'border-transparent';
+                        let bounce = '';
+
+                        switch(status) {
+                            case 'success':
+                                badgeClass = 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20';
+                                label = 'DONE';
+                                break;
+                            case 'failed':
+                                badgeClass = 'bg-rose-500/10 text-rose-500 border-rose-500/20 animate-pulse';
+                                label = 'FAIL';
+                                break;
+                            case 'running':
+                                badgeClass = 'bg-blue-500/10 text-blue-500 border-blue-500/40 border';
+                                label = 'BUSY';
+                                rowClass = 'border-blue-500/20 bg-blue-500/5';
+                                bounce = `<div class="flex gap-1">
+                                            <span class="w-1 h-1 bg-blue-500 rounded-full animate-bounce"></span>
+                                            <span class="w-1 h-1 bg-blue-500 rounded-full animate-bounce [animation-delay:0.2s]"></span>
+                                            <span class="w-1 h-1 bg-blue-500 rounded-full animate-bounce [animation-delay:0.4s]"></span>
+                                          </div>`;
+                                break;
+                            default:
+                                badgeClass = 'bg-slate-100 dark:bg-slate-800/50 text-slate-400 border-transparent';
+                                label = 'WAIT';
+                        }
+
+                        const textClass = status === 'running' ? 'text-slate-900 dark:text-white font-bold' : (status === 'pending' ? 'text-slate-500' : 'text-slate-700 dark:text-slate-400');
+                        const toggleId = `task-output-${i}`;
+                        const isRunning = status === 'running';
+                        const isOpen = openCollapsibles.has(toggleId);
+
+                        historyContainer.innerHTML += `
+                            <div class="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
+                                <button onclick="document.getElementById('${toggleId}').classList.toggle('hidden'); this.querySelector('.toggle-arrow').classList.toggle('rotate-180'); if (document.getElementById('${toggleId}').classList.contains('hidden')) { openCollapsibles.delete('${toggleId}'); } else { openCollapsibles.add('${toggleId}'); }" class="w-full flex items-center justify-between p-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
+                                    <div class="flex items-center gap-3">
+                                        <span class="text-[10px] px-2 py-0.5 rounded font-bold border uppercase ${badgeClass}">
+                                            ${label}
+                                        </span>
+                                        <span class="text-xs ${textClass}">
+                                            ${name}
+                                        </span>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        ${bounce}
+                                        <svg class="toggle-arrow w-4 h-4 text-slate-400 transition-transform ${isOpen ? '' : 'rotate-180'}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path>
+                                        </svg>
+                                    </div>
+                                </button>
+                                <div id="${toggleId}" class="${isOpen ? '' : 'hidden'} bg-slate-50 dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-700 p-3">
+                                    <pre class="text-[10px] text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-950 p-3 rounded border border-slate-200 dark:border-slate-800 overflow-x-auto max-h-64 overflow-y-auto font-mono whitespace-pre-wrap break-words">${output || '(no output)'}</pre>
+                                </div>
+                            </div>
+                        `;
+                    });
+
+                    // Update output terminal
+                    const outputTerminal = document.getElementById('output-terminal');
+                    if (data.current_output) {
+                        outputTerminal.textContent = data.current_output;
+                        outputTerminal.scrollTop = outputTerminal.scrollHeight;
+                    }
+
+                    // Update footer and status messages
+                    const statusText = document.getElementById('status-text');
+                    if (data.running) {
+                        statusText.textContent = 'System executing instructions...';
+                    } else {
+                        statusText.textContent = 'Process halted. Check logs.';
+                    }
+
+                    if (data.finished) {
+                        const resultContainer = document.getElementById('result-container');
+                        resultContainer.classList.remove('hidden');
+                        resultContainer.className = `mb-6 p-4 rounded-lg border ${data.success ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500' : 'bg-rose-500/10 border-rose-500/20 text-rose-500'} flex justify-between items-center uppercase text-[10px] font-bold tracking-widest`;
+                        resultContainer.innerHTML = `<span>${data.success ? '✓ Deployment Completed' : '✕ Deployment Failed'}</span><span>Duration: ${data.duration}s</span>`;
+                        
+                        document.getElementById('action-buttons').innerHTML = `
+                            <a href="/health" class="bg-slate-800 text-white px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-700 transition">BACK TO DASHBOARD</a>
+                            <a href="/log/view?file=${encodeURIComponent(data.log_file)}" class="border border-slate-200 dark:border-slate-800 px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition">VIEW FULL LOG</a>
+                        `;
+                        
+                        // Stop polling if finished
+                        clearInterval(pollInterval);
+                    }
+
+                } catch (error) {
+                    console.error('Error fetching status:', error);
+                }
+            }
+
+            async function stopDeployment() {
+                if (!confirm('Are you sure you want to stop the deployment?')) {
+                    return;
+                }
+                
+                try {
+                    const response = await fetch('/deploy/stop', { method: 'POST' });
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        alert('Deployment stopped successfully');
+                        updateStatus();
+                    } else {
+                        alert('Failed to stop deployment: ' + data.message);
+                    }
+                } catch (error) {
+                    console.error('Error stopping deployment:', error);
+                    alert('Error stopping deployment');
+                }
+            }
+
+            // Track which collapsibles are open
+            const openCollapsibles = new Set();
+
+            const pollInterval = setInterval(updateStatus, 1000);
+            window.onload = updateStatus;
+        </script>
     </head>
-    <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-400 min-h-screen flex items-center justify-center font-mono p-6 transition-colors duration-200">
-        <div class="w-full max-w-2xl p-8 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl">
+    <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-400 min-h-screen font-mono p-6 transition-colors duration-200">
+        <div class="w-full max-w-6xl mx-auto">
             
-            <div class="mb-8 flex justify-between items-end border-b border-slate-100 dark:border-slate-800 pb-6">
+            <!-- Header Section -->
+            <div class="mb-8 flex justify-between items-end border-b border-slate-200 dark:border-slate-700 pb-6">
                 <div>
                     <div class="text-[10px] text-slate-400 dark:text-slate-500 mb-1 uppercase tracking-[0.2em]">Current Progress</div>
-                    <div class="text-xl text-slate-900 dark:text-white font-bold tracking-tight">
+                    <div id="current-task" class="text-2xl text-slate-900 dark:text-white font-bold tracking-tight">
                         <?= $data['task'] ?>
                     </div>
                 </div>
                 <div class="text-right">
-                    <span class="text-2xl font-black text-slate-200 dark:text-slate-800"><?= $data['index'] ?>/<?= $data['total'] ?></span>
+                    <span id="progress-text" class="text-3xl font-black text-slate-300 dark:text-slate-700"><?= $data['index'] ?>/<?= $data['total'] ?></span>
                 </div>
             </div>
 
-            <div class="space-y-3 mb-8">
-                <?php foreach ($data['history'] as $i => $item):
-                    $status = $item['status'];
-                    $name = $item['name'];
+            <!-- Progress Bar -->
+            <div class="relative mb-6">
+                <div class="overflow-hidden h-2 text-xs flex rounded bg-slate-200 dark:bg-slate-800">
+                    <div id="progress-bar" style="width:<?= (($data['index'] - 1) / $data['total']) * 100 ?>%" class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-blue-600 transition-all duration-500"></div>
+                </div>
+            </div>
 
-                    // Definición de estilos por estado
-                    $badgeClass = match ($status) {
-                        'success' => 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
-                        'failed' => 'bg-rose-500/10 text-rose-500 border-rose-500/20 animate-pulse',
-                        'running' => 'bg-blue-500/10 text-blue-500 border-blue-500/40 border',
-                        default => 'bg-slate-100 dark:bg-slate-800/50 text-slate-400 border-transparent',
-                    };
-
-                    $label = match ($status) {
-                        'success' => 'DONE',
-                        'failed' => 'FAIL',
-                        'running' => 'BUSY',
-                        default => 'WAIT',
-                    };
-                    ?>
-                    <div class="flex items-center justify-between p-3 rounded-lg border <?= $status === 'running'
-                        ? 'border-blue-500/20 bg-blue-500/5'
-                        : 'border-transparent' ?> transition-all">
-                        <div class="flex items-center gap-3">
-                            <span class="text-[10px] px-2 py-0.5 rounded font-bold border uppercase <?= $badgeClass ?>">
-                                <?= $label ?>
-                            </span>
-                            <span class="text-xs <?= $status === 'running'
-                                ? 'text-slate-900 dark:text-white font-bold'
-                                : ($status === 'pending' ? 'text-slate-500' : 'text-slate-700 dark:text-slate-400') ?>">
-                                <?= $name ?>
-                            </span>
-                        </div>
-                        <?php if ($status === 'running'): ?>
-                            <div class="flex gap-1">
-                                <span class="w-1 h-1 bg-blue-500 rounded-full animate-bounce"></span>
-                                <span class="w-1 h-1 bg-blue-500 rounded-full animate-bounce [animation-delay:0.2s]"></span>
-                                <span class="w-1 h-1 bg-blue-500 rounded-full animate-bounce [animation-delay:0.4s]"></span>
-                            </div>
-                        <?php endif; ?>
+            <!-- Two-Column Layout: Task List + Real-time Output -->
+            <div class="grid grid-cols-2 gap-6 mb-8">
+                
+                <!-- Left Column: Task List with Expandable Outputs -->
+                <div class="flex flex-col">
+                    <div class="text-[10px] text-slate-400 dark:text-slate-500 mb-3 uppercase tracking-[0.2em] font-bold">Task Execution Timeline</div>
+                    <div id="history-container" class="space-y-2 overflow-y-auto max-h-96 pr-2">
+                        <!-- History items will be inserted here by JS -->
                     </div>
-                <?php endforeach; ?>
+                </div>
+
+                <!-- Right Column: Real-time Output Terminal -->
+                <div class="flex flex-col">
+                    <div class="text-[10px] text-slate-400 dark:text-slate-500 mb-3 uppercase tracking-[0.2em] font-bold">Real-time Output</div>
+                    <pre id="output-terminal" class="flex-1 overflow-y-auto p-4 bg-slate-900 text-slate-300 text-[10px] rounded-lg border border-slate-800 font-mono whitespace-pre-wrap break-words max-h-96"></pre>
+                </div>
+
             </div>
 
-            <div class="relative pt-1">
-                <div class="overflow-hidden h-1.5 mb-4 text-xs flex rounded bg-slate-100 dark:bg-slate-900">
-                    <div style="width:<?= $data['running'] ?? true ? (($data['index'] - 1) / $data['total']) * 100 : 100 ?>%" class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-blue-600 transition-all duration-500"></div>
-                </div>
-            </div>
-            
-            <div class="flex justify-between items-center">
-                <p class="text-[9px] text-slate-400 dark:text-slate-600 uppercase tracking-widest italic">
-                    <?php if ($data['running'] ?? true): ?>
+            <!-- Status and Action Section -->
+            <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <p id="status-text" class="text-[9px] text-slate-400 dark:text-slate-600 uppercase tracking-widest italic">
                         System executing instructions...
-                    <?php else: ?>
-                        Process halted. Check logs.
-                    <?php endif; ?>
-                </p>
-                <a href="/health" class="text-[10px] text-blue-500 hover:underline">Exit Live View</a>
-            </div>
-
-            <?php if ($isFinished): ?>
-                <div class="mb-6 p-4 rounded-lg border <?= $data['success']
-                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500'
-                    : 'bg-rose-500/10 border-rose-500/20 text-rose-500' ?> flex justify-between items-center uppercase text-[10px] font-bold tracking-widest">
-                    <span><?= $data['success'] ? '✓ Deployment Completed' : '✕ Deployment Failed' ?></span>
-                    <span>Duration: <?= $data['duration'] ?>s</span>
+                    </p>
+                    <a href="/health" class="text-[10px] text-blue-500 hover:underline">Exit Live View</a>
                 </div>
-            <?php endif; ?>
 
-            <div class="mt-8 flex justify-between items-center border-t border-slate-100 dark:border-slate-800 pt-6">
-                <?php if ($isFinished): ?>
-                    <div class="flex gap-4">
-                        <a href="/health" class="bg-slate-800 text-white px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-700 transition">BACK TO DASHBOARD</a>
-                        <a href="/log/view?file=<?= urlencode($data['log_file']) ?>" class="border border-slate-200 dark:border-slate-800 px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition">VIEW FULL LOG</a>
-                    </div>
-                <?php else: ?>
+                <div id="result-container" class="hidden mb-4"></div>
+
+                <div id="action-buttons" class="flex justify-between items-center border-t border-slate-200 dark:border-slate-700 pt-4">
                     <p class="text-[9px] text-slate-400 italic animate-pulse tracking-widest">SYNCING WITH SERVER...</p>
-                <?php endif; ?>
+                    <button id="stop-button" onclick="stopDeployment()" class="hidden bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded text-[10px] font-bold transition">
+                        ⏹ STOP DEPLOYMENT
+                    </button>
+                </div>
             </div>
+
         </div>
     </body>
     </html>
