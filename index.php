@@ -982,6 +982,7 @@ function runTasks(
         $taskStatus[$i] = [
             'name' => $t['name'] ?? 'Task '.($i + 1),
             'status' => 'pending',
+            'output' => '',
         ];
     }
     $statusData['history'] = $taskStatus;
@@ -1098,6 +1099,7 @@ function runTasks(
                         } else {
                             $stdout .= $line;
                             $statusData['current_output'] .= $line;
+                            $taskStatus[$indx]['output'] .= $line;
                             $fullLogRaw .= '['.date('Y-m-d H:i:s')."][info  ] $line";
                             $htmlLogContent .= htmlspecialchars($line);
                         }
@@ -1108,6 +1110,7 @@ function runTasks(
                         } else {
                             $stderr .= $line;
                             $statusData['current_output'] .= $line;
+                            $taskStatus[$indx]['output'] .= $line;
                             $fullLogRaw .= '['.date('Y-m-d H:i:s')."][error ] $line";
                             $htmlLogContent .= "<span style='color:red;'>".htmlspecialchars($line).'</span>';
                         }
@@ -1115,6 +1118,7 @@ function runTasks(
                 }
 
                 if ($hasOutput) {
+                    $statusData['history'] = $taskStatus;
                     updateLiveStatus($statusData);
                 }
                 
@@ -1683,12 +1687,13 @@ function renderLiveStatus()
                         stopButton.classList.add('hidden');
                     }
 
-                    // Update history
+                    // Update history with expandable outputs
                     const historyContainer = document.getElementById('history-container');
                     historyContainer.innerHTML = '';
                     data.history.forEach((item, i) => {
                         const status = item.status;
                         const name = item.name;
+                        const output = item.output || '';
 
                         let badgeClass = '';
                         let label = '';
@@ -1720,18 +1725,30 @@ function renderLiveStatus()
                         }
 
                         const textClass = status === 'running' ? 'text-slate-900 dark:text-white font-bold' : (status === 'pending' ? 'text-slate-500' : 'text-slate-700 dark:text-slate-400');
+                        const toggleId = `task-output-${i}`;
+                        const isRunning = status === 'running';
 
                         historyContainer.innerHTML += `
-                            <div class="flex items-center justify-between p-3 rounded-lg border ${rowClass} transition-all">
-                                <div class="flex items-center gap-3">
-                                    <span class="text-[10px] px-2 py-0.5 rounded font-bold border uppercase ${badgeClass}">
-                                        ${label}
-                                    </span>
-                                    <span class="text-xs ${textClass}">
-                                        ${name}
-                                    </span>
+                            <div class="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
+                                <button onclick="document.getElementById('${toggleId}').classList.toggle('hidden'); this.querySelector('.toggle-arrow').classList.toggle('rotate-180')" class="w-full flex items-center justify-between p-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
+                                    <div class="flex items-center gap-3">
+                                        <span class="text-[10px] px-2 py-0.5 rounded font-bold border uppercase ${badgeClass}">
+                                            ${label}
+                                        </span>
+                                        <span class="text-xs ${textClass}">
+                                            ${name}
+                                        </span>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        ${bounce}
+                                        <svg class="toggle-arrow w-4 h-4 text-slate-400 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path>
+                                        </svg>
+                                    </div>
+                                </button>
+                                <div id="${toggleId}" class="hidden bg-slate-50 dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-700 p-3">
+                                    <pre class="text-[10px] text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-950 p-3 rounded border border-slate-200 dark:border-slate-800 overflow-x-auto max-h-64 overflow-y-auto font-mono whitespace-pre-wrap break-words">${output || '(no output)'}</pre>
                                 </div>
-                                ${bounce}
                             </div>
                         `;
                     });
@@ -1796,51 +1813,67 @@ function renderLiveStatus()
             window.onload = updateStatus;
         </script>
     </head>
-    <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-400 min-h-screen flex items-center justify-center font-mono p-6 transition-colors duration-200">
-        <div class="w-full max-w-3xl p-8 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl">
+    <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-400 min-h-screen font-mono p-6 transition-colors duration-200">
+        <div class="w-full max-w-6xl mx-auto">
             
-            <div class="mb-8 flex justify-between items-end border-b border-slate-100 dark:border-slate-800 pb-6">
+            <!-- Header Section -->
+            <div class="mb-8 flex justify-between items-end border-b border-slate-200 dark:border-slate-700 pb-6">
                 <div>
                     <div class="text-[10px] text-slate-400 dark:text-slate-500 mb-1 uppercase tracking-[0.2em]">Current Progress</div>
-                    <div id="current-task" class="text-xl text-slate-900 dark:text-white font-bold tracking-tight">
+                    <div id="current-task" class="text-2xl text-slate-900 dark:text-white font-bold tracking-tight">
                         <?= $data['task'] ?>
                     </div>
                 </div>
                 <div class="text-right">
-                    <span id="progress-text" class="text-2xl font-black text-slate-200 dark:text-slate-800"><?= $data['index'] ?>/<?= $data['total'] ?></span>
+                    <span id="progress-text" class="text-3xl font-black text-slate-300 dark:text-slate-700"><?= $data['index'] ?>/<?= $data['total'] ?></span>
                 </div>
             </div>
 
-            <div id="history-container" class="space-y-3 mb-8">
-                <!-- History items will be inserted here by JS -->
-            </div>
-
-            <div class="mb-8">
-                <div class="text-[10px] text-slate-400 dark:text-slate-500 mb-2 uppercase tracking-[0.2em]">Real-time Output</div>
-                <pre id="output-terminal" class="w-full h-48 overflow-y-auto p-4 bg-slate-900 text-slate-300 text-[10px] rounded-lg border border-slate-800 font-mono"></pre>
-            </div>
-
-            <div class="relative pt-1">
-                <div class="overflow-hidden h-1.5 mb-4 text-xs flex rounded bg-slate-100 dark:bg-slate-900">
+            <!-- Progress Bar -->
+            <div class="relative mb-6">
+                <div class="overflow-hidden h-2 text-xs flex rounded bg-slate-200 dark:bg-slate-800">
                     <div id="progress-bar" style="width:<?= (($data['index'] - 1) / $data['total']) * 100 ?>%" class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-blue-600 transition-all duration-500"></div>
                 </div>
             </div>
-            
-            <div class="flex justify-between items-center mb-6">
-                <p id="status-text" class="text-[9px] text-slate-400 dark:text-slate-600 uppercase tracking-widest italic">
-                    System executing instructions...
-                </p>
-                <a href="/health" class="text-[10px] text-blue-500 hover:underline">Exit Live View</a>
+
+            <!-- Two-Column Layout: Task List + Real-time Output -->
+            <div class="grid grid-cols-2 gap-6 mb-8">
+                
+                <!-- Left Column: Task List with Expandable Outputs -->
+                <div class="flex flex-col">
+                    <div class="text-[10px] text-slate-400 dark:text-slate-500 mb-3 uppercase tracking-[0.2em] font-bold">Task Execution Timeline</div>
+                    <div id="history-container" class="space-y-2 overflow-y-auto max-h-96 pr-2">
+                        <!-- History items will be inserted here by JS -->
+                    </div>
+                </div>
+
+                <!-- Right Column: Real-time Output Terminal -->
+                <div class="flex flex-col">
+                    <div class="text-[10px] text-slate-400 dark:text-slate-500 mb-3 uppercase tracking-[0.2em] font-bold">Real-time Output</div>
+                    <pre id="output-terminal" class="flex-1 overflow-y-auto p-4 bg-slate-900 text-slate-300 text-[10px] rounded-lg border border-slate-800 font-mono whitespace-pre-wrap break-words max-h-96"></pre>
+                </div>
+
             </div>
 
-            <div id="result-container" class="hidden"></div>
+            <!-- Status and Action Section -->
+            <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <p id="status-text" class="text-[9px] text-slate-400 dark:text-slate-600 uppercase tracking-widest italic">
+                        System executing instructions...
+                    </p>
+                    <a href="/health" class="text-[10px] text-blue-500 hover:underline">Exit Live View</a>
+                </div>
 
-            <div id="action-buttons" class="mt-8 flex justify-between items-center border-t border-slate-100 dark:border-slate-800 pt-6">
-                <p class="text-[9px] text-slate-400 italic animate-pulse tracking-widest">SYNCING WITH SERVER...</p>
-                <button id="stop-button" onclick="stopDeployment()" class="hidden bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded text-[10px] font-bold transition">
-                    ⏹ STOP DEPLOYMENT
-                </button>
+                <div id="result-container" class="hidden mb-4"></div>
+
+                <div id="action-buttons" class="flex justify-between items-center border-t border-slate-200 dark:border-slate-700 pt-4">
+                    <p class="text-[9px] text-slate-400 italic animate-pulse tracking-widest">SYNCING WITH SERVER...</p>
+                    <button id="stop-button" onclick="stopDeployment()" class="hidden bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded text-[10px] font-bold transition">
+                        ⏹ STOP DEPLOYMENT
+                    </button>
+                </div>
             </div>
+
         </div>
     </body>
     </html>
