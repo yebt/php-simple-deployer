@@ -480,11 +480,32 @@ function validateYqlPathForYml()
         if (! $yqPath) {
             return 'YQ_PATH environment variable is not set. Required for processing YAML files.';
         }
+        
         // Check if yq binary exists
+        if (!file_exists($yqPath)) {
+            return "YQ binary not found at path: $yqPath";
+        }
+        
+        // Check if it's a regular file
+        if (!is_file($yqPath)) {
+            return "YQ path is not a regular file: $yqPath";
+        }
+        
+        // Check if it's executable, if not try to fix it
+        if (!is_executable($yqPath)) {
+            // Try to make it executable
+            if (@chmod($yqPath, 0755)) {
+                echo "[INFO] YQ binary permissions fixed: chmod +x applied to $yqPath\n";
+            } else {
+                return "YQ binary is not executable and cannot fix permissions. Run: chmod +x $yqPath";
+            }
+        }
+        
+        // Verify yq works by running version command
         $testCmd = escapeshellcmd("$yqPath --version");
         $testOutput = shell_exec($testCmd.' 2>&1');
         if ($testOutput === null || $testOutput === false || stripos($testOutput, 'yq') === false) {
-            return "YQ binary not found at path: $yqPath";
+            return "YQ binary not working at path: $yqPath";
         }
     }
     return null;
