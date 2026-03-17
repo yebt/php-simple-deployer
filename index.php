@@ -170,6 +170,7 @@ $router->add('/log/last', 'actionLogLast');
 // $router->add('/latest', 'actionLogLatestHtml');
 $router->add('/log/lasthtml', 'actionLogLatestHtml');
 $router->add('/status/live', 'actionStatusLive');
+$router->add('/deploy/stop', 'actionDeployStop');
 $router->add('/test-notify', 'actionNotifyTest');
 $router->add('/clear-history', 'actionClearHistory');
 
@@ -349,6 +350,49 @@ MARKDOWN
 function actionClearHistory()
 {
     clearHistory();
+}
+
+function actionDeployStop()
+{
+    global $statusFile;
+    
+    // Security check
+    validateSecurity();
+    
+    // Check if there's a deployment running
+    if (!file_exists($statusFile)) {
+        http_response_code(400);
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'message' => 'No deployment in progress']);
+        exit();
+    }
+    
+    $statusData = json_decode(file_get_contents($statusFile), true);
+    
+    // Check if it's actually running
+    if (!isset($statusData['running']) || !$statusData['running']) {
+        http_response_code(400);
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'message' => 'No deployment running']);
+        exit();
+    }
+    
+    // Kill all PHP processes that are running deployment
+    // This will catch the shell process (stdbuf -o0 -e0 bash)
+    $cmd = "pkill -f 'stdbuf -o0 -e0 bash' || pkill -P $$ 2>/dev/null";
+    shell_exec($cmd);
+    
+    // Update status to stopped
+    $statusData['running'] = false;
+    $statusData['finished'] = true;
+    $statusData['stopped_at'] = date('Y-m-d H:i:s');
+    $statusData['task'] = 'DEPLOYMENT STOPPED BY USER';
+    
+    file_put_contents($statusFile, json_encode($statusData));
+    
+    header('Content-Type: application/json');
+    echo json_encode(['success' => true, 'message' => 'Deployment stopped']);
+    exit();
 }
 
 // --- LOGIC ---
@@ -1631,6 +1675,14 @@ function renderLiveStatus()
                     const progressPercent = data.running || data.finished ? (data.index / data.total) * 100 : ((data.index - 1) / data.total) * 100;
                     document.getElementById('progress-bar').style.width = progressPercent + '%';
 
+                    // Update stop button visibility
+                    const stopButton = document.getElementById('stop-button');
+                    if (data.running) {
+                        stopButton.classList.remove('hidden');
+                    } else {
+                        stopButton.classList.add('hidden');
+                    }
+
                     // Update history
                     const historyContainer = document.getElementById('history-container');
                     historyContainer.innerHTML = '';
@@ -1719,6 +1771,27 @@ function renderLiveStatus()
                 }
             }
 
+            async function stopDeployment() {
+                if (!confirm('Are you sure you want to stop the deployment?')) {
+                    return;
+                }
+                
+                try {
+                    const response = await fetch('/deploy/stop', { method: 'POST' });
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        alert('Deployment stopped successfully');
+                        updateStatus();
+                    } else {
+                        alert('Failed to stop deployment: ' + data.message);
+                    }
+                } catch (error) {
+                    console.error('Error stopping deployment:', error);
+                    alert('Error stopping deployment');
+                }
+            }
+
             const pollInterval = setInterval(updateStatus, 1000);
             window.onload = updateStatus;
         </script>
@@ -1764,6 +1837,9 @@ function renderLiveStatus()
 
             <div id="action-buttons" class="mt-8 flex justify-between items-center border-t border-slate-100 dark:border-slate-800 pt-6">
                 <p class="text-[9px] text-slate-400 italic animate-pulse tracking-widest">SYNCING WITH SERVER...</p>
+                <button id="stop-button" onclick="stopDeployment()" class="hidden bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded text-[10px] font-bold transition">
+                    ⏹ STOP DEPLOYMENT
+                </button>
             </div>
         </div>
     </body>
