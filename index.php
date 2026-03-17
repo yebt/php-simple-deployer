@@ -1048,7 +1048,7 @@ function runTasks(
 
             // Wrap multiline scripts properly
             $wrapped = sprintf(
-                "{\n%s\n}\n__exit__=$?\necho '__STDOUT_EOF__'\"$__exit__\"\necho '__STDERR_EOF__'\"$__exit__\" >&2\n",
+                "{\n%s\n}\n__exit__=$?\necho '__STDOUT_EOF__'\"\$__exit__\"\necho '__STDERR_EOF__'\"\$__exit__\" >&2\n",
                 $cmd
             );
             fwrite($pipes[0], $wrapped); // Send command to shell
