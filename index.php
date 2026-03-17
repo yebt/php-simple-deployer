@@ -398,7 +398,8 @@ function validateInstructions($tasks)
 
 function convertYmlToJson($ymlPath)
 {
-    $yqPath = env('YQ_PATH', 'yq');
+    // $yqPath = env('YQ_PATH', 'yq');
+    $yqPath = env('YQ_PATH');
 
     // Execute yq to convert YML to JSON
     $cmd = escapeshellcmd("$yqPath -o=json '$ymlPath'");
