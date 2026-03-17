@@ -389,10 +389,50 @@ function validateInstructions($tasks)
     return true;
 }
 
+function convertYmlToJson($ymlPath)
+{
+    $yqPath = env('YQ_PATH', 'yq');
+
+    // Execute yq to convert YML to JSON
+    $cmd = escapeshellcmd("$yqPath -o=json '$ymlPath'");
+    $output = shell_exec($cmd);
+
+    if ($output === null || $output === false) {
+        return null;
+    }
+
+    return trim($output);
+}
+
+function getInstructionsContent()
+{
+    global $config;
+    $instructionsFile = $config['instructions'];
+
+    // Check if it's a YML file
+    if (
+        strtolower(pathinfo($instructionsFile, PATHINFO_EXTENSION)) === 'yml'
+        || strtolower(pathinfo($instructionsFile, PATHINFO_EXTENSION)) === 'yaml'
+    ) {
+        return convertYmlToJson($instructionsFile);
+    }
+
+    // Otherwise, read as JSON
+    return file_get_contents($instructionsFile);
+}
+
 function validateJsonContent()
 {
     global $config;
-    $jsonContent = file_get_contents($config['instructions']);
+    $jsonContent = getInstructionsContent();
+
+    if ($jsonContent === null || $jsonContent === false) {
+        return [
+            'Deployment started. Processing instructions...',
+            'Failed to read or convert instructions file.',
+        ];
+    }
+
     $tasks = json_decode($jsonContent, true);
     if (is_null($tasks)) {
         return [
@@ -709,7 +749,7 @@ function executeDeploymentWithSingleShellProccess()
     $logFIlePathHTML = $config['logs_path'].'/'.$logFileName.'.html';
 
     // Get tasks in the instructions file
-    $jsonContent = file_get_contents($config['instructions']);
+    $jsonContent = getInstructionsContent();
     $tasks = json_decode($jsonContent, true);
 
     runTasks($logFilePath, $logFilePathRaw, $logFIlePathHTML, $tasks);
