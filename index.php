@@ -167,6 +167,8 @@ $router->add('/log/rview/([a-zA-Z0-9_]+)', 'actionLogRawView');
 $router->add('/log/bview/([a-zA-Z0-9_]+)', 'actionLogBaseRawView');
 $router->add('/log/htmlview/([a-zA-Z0-9_]+)', 'actionLogHtmlView');
 $router->add('/log/last', 'actionLogLast');
+// $router->add('/latest', 'actionLogLatestHtml');
+$router->add('/log/lasthtml', 'actionLogLatestHtml');
 $router->add('/status/live', 'actionStatusLive');
 $router->add('/test-notify', 'actionNotifyTest');
 $router->add('/clear-history', 'actionClearHistory');
@@ -301,6 +303,11 @@ function actionLogRawView($id)
 function actionLogLast()
 {
     showLastLog();
+}
+
+function actionLogLatestHtml()
+{
+    showLastLogHtml();
 }
 
 function actionStatusLive()
@@ -1114,6 +1121,17 @@ function showLastLog()
         exit('No logs available.');
     usort($logs, fn ($a, $b) => filemtime($b) - filemtime($a));
     header('Content-Type: text/plain');
+    readfile($logs[0]);
+}
+
+function showLastLogHtml()
+{
+    global $config;
+    $logs = glob($config['logs_path'].'/*.html');
+    if (! $logs)
+        exit('No HTML logs available.');
+    usort($logs, fn ($a, $b) => filemtime($b) - filemtime($a));
+    header('Content-Type: text/html');
     readfile($logs[0]);
 }
 
