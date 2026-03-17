@@ -18,7 +18,7 @@
     ]
   },
   {
-    "name": "Build",
+    "name": "Build from yml",
     "run": [
       "echo Environment: $NODE_ENV",
       "CAP=2",
@@ -30,9 +30,12 @@
   },
   {
     "name": "Making step things",
-    "run":[
+    "run": [
       "for i in {1,2}{A,B}; do echo \"$i\"; sleep $((RANDOM%5+1)); done"
     ]
+  },
+  {
+    "name": "Example multiline script",
+    "run": "echo \"Inicio\"\nexport NODE_ENV=production\necho \"Environment: $NODE_ENV\"\nmkdir -p release/build\necho \"Fin\"\n"
   }
 ]
-
