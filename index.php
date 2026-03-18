@@ -1065,7 +1065,9 @@ function runTasks(
         foreach ($commandsToRun as $cmd) {
             $fullLog .= "\n[CMD]: $cmd\n";
             $fullLogRaw .= '['.date('Y-m-d H:i:s')."] $cmd\n";
-            $htmlLogContent .= "<h3>Command: $cmd</h3>\n";
+            $cmdHtml = explode('\\n', $cmd);
+            $cmdHtml = implode("<br>", array_map('htmlspecialchars', $cmdHtml));
+            $htmlLogContent .= "<h3>Command: $cmdHtml</h3>\n";
 
             // Wrap multiline scripts properly
             $wrapped = sprintf(
