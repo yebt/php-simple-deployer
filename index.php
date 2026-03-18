@@ -405,6 +405,13 @@ function validateSecurity()
         return;
     if (isset($_GET['manual']) && $_GET['manual'] === '1')
         return;
+    
+    // Allow requests from localhost/127.0.0.1 (UI requests) without token
+    $clientIP = $_SERVER['REMOTE_ADDR'] ?? '';
+    if ($clientIP === 'localhost' || $clientIP === '127.0.0.1' || $clientIP === '::1') {
+        return;
+    }
+    
     $headers = getallheaders();
     $token = $headers['X-Deploy-Token'] ?? $_GET['token'] ?? '';
     if ($token !== $config['secure_token']) {
@@ -1069,9 +1076,10 @@ function runTasks(
             $cmdHtml = implode("<br>", array_map('htmlspecialchars', $cmdHtml));
             $htmlLogContent .= "<h3>Command: $cmdHtml</h3>\n";
 
-            // Wrap multiline scripts properly
+            // Wrap multiline scripts properly with 'set -e' to stop on first error
+            // This ensures exit codes are properly propagated, especially for multi-line scripts
             $wrapped = sprintf(
-                "{\n%s\n}\n__exit__=$?\necho '__STDOUT_EOF__'\"\$__exit__\"\necho '__STDERR_EOF__'\"\$__exit__\" >&2\n",
+                "set -e\n{\n%s\n}\n__exit__=$?\necho '__STDOUT_EOF__'\"\$__exit__\"\necho '__STDERR_EOF__'\"\$__exit__\" >&2\n",
                 $cmd
             );
             fwrite($pipes[0], $wrapped); // Send command to shell
