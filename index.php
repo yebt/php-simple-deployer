@@ -162,6 +162,7 @@ if (env('MODE', 'production') !== 'production') {
 $router->add('/webhook/deploy', 'actionWebhookDeploy');
 $router->add('/webhook/deploy/nowait', 'actionWebhookDeployNoWait');
 
+$router->add('/alllogs', 'actionLogsView');
 $router->add('/log/view', 'actionLogView');
 $router->add('/log/rview/([a-zA-Z0-9_]+)', 'actionLogRawView');
 $router->add('/log/bview/([a-zA-Z0-9_]+)', 'actionLogBaseRawView');
@@ -302,6 +303,11 @@ function actionLogHtmlView($id)
 {
     $file = $id.'.log.html';
     showSpecificLog($file, 'text/html');
+}
+
+function actionLogsView()
+{
+    renderLogsView();
 }
 
 function actionLogFRawView($id)
@@ -930,7 +936,11 @@ function runTasks(
                     $hasOutput = true;
                     if ($stream === $pipes[1]) {
                         // Match __STDOUT_EOF__123 format
-                        if (preg_match('/^__STDOUT_EOF__(.*)$/', trim($line), $m)) {
+                        $trimedLine = trim($line);
+                        if (
+                            preg_match('/^__STDOUT_EOF__(.*)$/', $trimedLine, $m)
+                            || str_contains($trimedLine, '__STDOUT_EOF__') // NOTE: Is possible a error if the element contains problems
+                        ) {
                             $exitCode = (int) $m[1];
                             $stdoutDone = true;
                             $fullLogFRaw .= '[STDOUT] '.trim($line)."\n";
@@ -1509,6 +1519,7 @@ function renderHealthView()
                                 </a>
                             <?php endif; ?>
                             <a href="/test-notify" class="block w-full text-center border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 py-2 rounded text-xs transition">TEST NOTIFICATION</a>
+                            <a href="/alllogs" class="block w-full text-center border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 py-2 rounded text-xs transition uppercase tracking-widest">All Logs</a>
                             <a href="/clear-history" onclick="return confirm('Clear all logs?')" class="block w-full text-center text-rose-500 hover:text-rose-500 py-2 text-xs transition">CLEAR HISTORY</a>
                         </div>
                     </div>
@@ -1517,7 +1528,7 @@ function renderHealthView()
                 <div class="lg:col-span-3 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden shadow-sm dark:shadow-xl flex flex-col">
                     <div class="p-5 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-900/30">
                         <h2 class="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-widest">Recent Execution History</h2>
-                        <a target="_blank" href="/log/last" class="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold uppercase tracking-tighter transition">View Latest Raw</a>
+                        <a href="/alllogs" class="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold uppercase tracking-tighter transition">View All Logs →</a>
                     </div>
                     <div class="overflow-x-auto">
                         <table class="w-full text-left border-collapse">
@@ -1577,6 +1588,160 @@ function renderHealthView()
   { "name": "Optimize Cache", "run": "php artisan config:cache" }
 ]</pre>
             </div>
+        </div>
+    </body>
+    </html>
+    <?php
+}
+
+function renderLogsView()
+{
+    global $config;
+
+    $type = $_GET['type'] ?? 'log';
+    $validTypes = ['log', 'rlog', 'html', 'fraw'];
+    if (! in_array($type, $validTypes))
+        $type = 'log';
+
+    $typeConfig = [
+        'log'  => ['glob' => '*.log',  'url' => fn ($id) => "/log/rview/$id",    'label' => 'LOG',  'desc' => 'Formatted plain text log'],
+        'rlog' => ['glob' => '*.rlog', 'url' => fn ($id) => "/log/bview/$id",    'label' => 'RLOG', 'desc' => 'Timestamped raw log'],
+        'html' => ['glob' => '*.html', 'url' => fn ($id) => "/log/htmlview/$id", 'label' => 'HTML', 'desc' => 'Styled HTML log'],
+        'fraw' => ['glob' => '*.fraw', 'url' => fn ($id) => "/log/frawview/$id", 'label' => 'FRAW', 'desc' => 'Full raw stream with signals'],
+    ];
+
+    $logs = glob($config['logs_path'].'/'.$typeConfig[$type]['glob']) ?: [];
+    usort($logs, fn ($a, $b) => filemtime($b) - filemtime($a));
+
+    $tabColors = [
+        'log'  => 'indigo',
+        'rlog' => 'violet',
+        'html' => 'sky',
+        'fraw' => 'amber',
+    ];
+
+    $resolveStatus = function ($logPath) use ($config) {
+        $fn = basename($logPath);
+        $id = preg_replace('/\.log.*$/', '', $fn);
+        $baseLog = $config['logs_path'].'/'.$id.'.log';
+        if (! file_exists($baseLog))
+            return null;
+        $content = file_get_contents($baseLog);
+        $lines = preg_split('/\r\n|\r|\n/', trim($content));
+        $exitLine = $lines[count($lines) - 5] ?? '';
+
+        return str_contains($exitLine, 'EXIT: 0');
+    };
+
+    ?>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+        <title>Logs — Deployer</title>
+        <?= renderHeadImports() ?>
+    </head>
+    <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-300 p-8 font-mono text-sm transition-colors duration-200">
+        <div class="max-w-6xl mx-auto">
+
+            <!-- Header -->
+            <div class="flex justify-between items-start mb-8">
+                <div>
+                    <h1 class="text-slate-900 dark:text-white font-bold text-xl tracking-tighter uppercase">SIMPLE PHP <span class="text-[#a855f7]">DEPLOYER</span></h1>
+                    <p class="text-slate-400 dark:text-slate-500">Execution Logs</p>
+                </div>
+                <a href="/health" class="text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-bold uppercase tracking-tighter">← Dashboard</a>
+            </div>
+
+            <!-- Tabs -->
+            <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl overflow-hidden">
+                <div class="flex border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30">
+                    <?php foreach ($typeConfig as $key => $cfg):
+                        $active = $key === $type;
+                        $color = $tabColors[$key];
+                        $activeClass = $active
+                            ? "border-b-2 border-{$color}-500 text-{$color}-600 dark:text-{$color}-400 bg-white dark:bg-[#161b2a]"
+                            : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/40';
+                        ?>
+                        <a href="/alllogs?type=<?= $key ?>"
+                           class="px-6 py-3 text-[10px] font-bold uppercase tracking-widest transition <?= $activeClass ?>">
+                            <?= $cfg['label'] ?>
+                            <?php if ($active): ?>
+                                <span class="ml-1.5 text-[9px] opacity-60"><?= $cfg['desc'] ?></span>
+                            <?php endif; ?>
+                        </a>
+                    <?php endforeach; ?>
+                </div>
+
+                <!-- Table -->
+                <div class="overflow-x-auto">
+                    <?php if (! $logs): ?>
+                        <div class="p-16 text-center text-slate-400 dark:text-slate-600 italic text-sm">
+                            No <?= strtoupper($type) ?> logs found.
+                        </div>
+                    <?php else: ?>
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 text-[10px] uppercase">
+                                <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800">File</th>
+                                <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800">Date</th>
+                                <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800 text-right">Size</th>
+                                <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800 text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                            <?php foreach ($logs as $logPath):
+                                $fn = basename($logPath);
+                                $id = preg_replace('/\.log.*$/', '', $fn);
+                                $isOk = $resolveStatus($logPath);
+                                $size = filesize($logPath);
+                                $sizeLabel = $size < 1024
+                                    ? $size.' B'
+                                    : ($size < 1048576
+                                        ? round($size / 1024, 1).' KB'
+                                        : round($size / 1048576, 2).' MB');
+                                $viewUrl = ($typeConfig[$type]['url'])($id);
+                                ?>
+                                <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition">
+                                    <td class="px-6 py-4 text-xs">
+                                        <?php if ($isOk === true): ?>
+                                            <span class="mr-2 text-emerald-500">●</span>
+                                        <?php elseif ($isOk === false): ?>
+                                            <span class="mr-2 text-rose-500">●</span>
+                                        <?php else: ?>
+                                            <span class="mr-2 text-slate-300 dark:text-slate-700">●</span>
+                                        <?php endif; ?>
+                                        <?= htmlspecialchars($fn) ?>
+                                    </td>
+                                    <td class="px-6 py-4 text-slate-400 dark:text-slate-600 text-xs">
+                                        <?= date('Y-m-d H:i:s', filemtime($logPath)) ?>
+                                    </td>
+                                    <td class="px-6 py-4 text-slate-400 dark:text-slate-600 text-xs text-right tabular-nums">
+                                        <?= $sizeLabel ?>
+                                    </td>
+                                    <td class="px-6 py-4 text-right">
+                                        <a target="_blank" href="<?= $viewUrl ?>"
+                                           class="inline-block px-3 py-1 rounded text-[10px] font-bold uppercase tracking-wide
+                                                  bg-<?= $tabColors[$type] ?>-500/10 text-<?= $tabColors[$type] ?>-600 dark:text-<?= $tabColors[$type] ?>-400
+                                                  hover:bg-<?= $tabColors[$type] ?>-500/20 transition">
+                                            OPEN
+                                        </a>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                    <?php endif; ?>
+                </div>
+
+                <!-- Footer -->
+                <div class="px-6 py-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30 text-[10px] text-slate-400 dark:text-slate-600 flex justify-between">
+                    <span><?= count($logs) ?> file(s) found</span>
+                    <span><?= $typeConfig[$type]['desc'] ?></span>
+                </div>
+            </div>
+
         </div>
     </body>
     </html>
