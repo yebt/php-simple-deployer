@@ -852,6 +852,7 @@ function runTasks(
         $fullLogFRaw .= "\n+---------------------------------------------+\n";
         $htmlLogContent .= '<hr>';
         $fullLog .= "[TASK]: $taskToRunName";
+        $fullLogFRaw .= "[TASK]: $taskToRunName\n";
         $htmlLogContent .= "<h2>$taskToRunName</h2>\n";
 
         $taskSuccess = true;
@@ -860,6 +861,7 @@ function runTasks(
         foreach ($commandsToRun as $cmd) {
             $fullLog .= "\n[CMD]: $cmd\n";
             $fullLogRaw .= '['.date('Y-m-d H:i:s')."] $cmd\n";
+            $fullLogFRaw .= "\n[CMD]: $cmd\n";
             $cmdHtml = explode('\\n', $cmd);
             $cmdHtml = implode('<br>', array_map('htmlspecialchars', $cmdHtml));
             $htmlLogContent .= "<h3>Command: $cmdHtml</h3>\n";
