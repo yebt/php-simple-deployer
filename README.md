@@ -1,3 +1,5 @@
+![banner](./assets/banner.jpg) 
+
 # SPHPD — Simple PHP Deployer
 
 A minimalist, single-file PHP deployment tool with a live dashboard, webhook support, Telegram notifications, and JSON/YAML instruction files.
