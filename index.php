@@ -789,6 +789,7 @@ function runTasks(
     $fullLogRaw = 'START: '.date('Y-m-d H:i:s')."\n";
     $fullLogFRaw = 'START: '.date('Y-m-d H:i:s')."\n";
     $htmlLogContent = '<h1>Deployment Log - Started at '.date('Y-m-d H:i:s')."</h1>\n";
+    file_put_contents($logFilePathFRaw, $fullLogFRaw);
 
     // Init the statusfile with pending status for all tasks
     $taskStatus = [];
@@ -851,9 +852,11 @@ function runTasks(
         $fullLogRaw .= "\n+---------------------------------------------+\n";
         $fullLogFRaw .= "\n+---------------------------------------------+\n";
         $htmlLogContent .= '<hr>';
+        file_put_contents($logFilePathFRaw, "\n+---------------------------------------------+\n", FILE_APPEND);
         $fullLog .= "[TASK]: $taskToRunName";
         $fullLogFRaw .= "[TASK]: $taskToRunName\n";
         $htmlLogContent .= "<h2>$taskToRunName</h2>\n";
+        file_put_contents($logFilePathFRaw, "[TASK]: $taskToRunName\n", FILE_APPEND);
 
         $taskSuccess = true;
         $errorOutput = '';
@@ -862,6 +865,7 @@ function runTasks(
             $fullLog .= "\n[CMD]: $cmd\n";
             $fullLogRaw .= '['.date('Y-m-d H:i:s')."] $cmd\n";
             $fullLogFRaw .= "\n[CMD]: $cmd\n";
+            file_put_contents($logFilePathFRaw, "\n[CMD]: $cmd\n", FILE_APPEND);
             $cmdHtml = explode('\\n', $cmd);
             $cmdHtml = implode('<br>', array_map('htmlspecialchars', $cmdHtml));
             $htmlLogContent .= "<h3>Command: $cmdHtml</h3>\n";
@@ -930,12 +934,14 @@ function runTasks(
                             $exitCode = (int) $m[1];
                             $stdoutDone = true;
                             $fullLogFRaw .= '[STDOUT] '.trim($line)."\n";
+                            file_put_contents($logFilePathFRaw, '[STDOUT] '.trim($line)."\n", FILE_APPEND);
                         } else {
                             $stdout .= $line;
                             $statusData['current_output'] .= $line;
                             $taskStatus[$indx]['output'] .= $line;
                             $fullLogRaw .= '['.date('Y-m-d H:i:s')."][info  ] $line";
                             $fullLogFRaw .= '[STDOUT] '.$line;
+                            file_put_contents($logFilePathFRaw, '[STDOUT] '.$line, FILE_APPEND);
                             $htmlLogContent .= htmlspecialchars($line);
                         }
                     } else {
@@ -943,12 +949,14 @@ function runTasks(
                         if (preg_match('/^__STDERR_EOF__(.*)$/', trim($line), $m)) {
                             $stderrDone = true;
                             $fullLogFRaw .= '[STDERR] '.trim($line)."\n";
+                            file_put_contents($logFilePathFRaw, '[STDERR] '.trim($line)."\n", FILE_APPEND);
                         } else {
                             $stderr .= $line;
                             $statusData['current_output'] .= $line;
                             $taskStatus[$indx]['output'] .= $line;
                             $fullLogRaw .= '['.date('Y-m-d H:i:s')."][error ] $line";
                             $fullLogFRaw .= '[STDERR] '.$line;
+                            file_put_contents($logFilePathFRaw, '[STDERR] '.$line, FILE_APPEND);
                             $htmlLogContent .= "<span style='color:red;'>".htmlspecialchars($line).'</span>';
                         }
                     }
@@ -998,6 +1006,7 @@ function runTasks(
     $fullLog .= "\n=============================================\n";
     $fullLogRaw .= "\n=============================================\n";
     $fullLogFRaw .= "\n=============================================\n";
+    file_put_contents($logFilePathFRaw, "\n=============================================\n", FILE_APPEND);
 
     $duration = round(microtime(true) - $startTime, 2);
 
@@ -1007,7 +1016,7 @@ function runTasks(
     // Update logs after each task
     file_put_contents($lofgilePath, $fullLog."\nEND. Duration: {$duration}s");
     file_put_contents($logFilePathRaw, $fullLogRaw."\nEND. Duration: {$duration}s");
-    file_put_contents($logFilePathFRaw, $fullLogFRaw."\nEND. Duration: {$duration}s");
+    file_put_contents($logFilePathFRaw, "\nEND. Duration: {$duration}s", FILE_APPEND);
     file_put_contents($logFilePathHTML, createLogHtml("Deployment Log - $taskToRunName", $htmlLogContent));
 
     // Update status
