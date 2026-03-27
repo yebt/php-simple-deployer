@@ -166,9 +166,11 @@ $router->add('/log/view', 'actionLogView');
 $router->add('/log/rview/([a-zA-Z0-9_]+)', 'actionLogRawView');
 $router->add('/log/bview/([a-zA-Z0-9_]+)', 'actionLogBaseRawView');
 $router->add('/log/htmlview/([a-zA-Z0-9_]+)', 'actionLogHtmlView');
+$router->add('/log/frawview/([a-zA-Z0-9_]+)', 'actionLogFRawView');
 $router->add('/log/last', 'actionLogLast');
 // $router->add('/latest', 'actionLogLatestHtml');
 $router->add('/log/lasthtml', 'actionLogLatestHtml');
+$router->add('/log/lastfraw', 'actionLogLastFRaw');
 $router->add('/status/live', 'actionStatusLive');
 $router->add('/deploy/stop', 'actionDeployStop');
 $router->add('/test-notify', 'actionNotifyTest');
@@ -302,6 +304,12 @@ function actionLogHtmlView($id)
     showSpecificLog($file, 'text/html');
 }
 
+function actionLogFRawView($id)
+{
+    $file = $id.'.log.fraw';
+    showSpecificLog($file);
+}
+
 function actionLogRawView($id)
 {
     $file = $id.'.log';
@@ -311,6 +319,11 @@ function actionLogRawView($id)
 function actionLogLast()
 {
     showLastLog();
+}
+
+function actionLogLastFRaw()
+{
+    showLastLogFRaw();
 }
 
 function actionLogLatestHtml()
@@ -686,12 +699,13 @@ function executeDeploymentWithSingleShellProccess()
     $logFilePath = $config['logs_path'].'/'.$logFileName;
     $logFilePathRaw = $config['logs_path'].'/'.$logFileName.'.rlog';
     $logFIlePathHTML = $config['logs_path'].'/'.$logFileName.'.html';
+    $logFilePathFRaw = $config['logs_path'].'/'.$logFileName.'.fraw';
 
     // Get tasks in the instructions file
     $jsonContent = getInstructionsContent();
     $tasks = json_decode($jsonContent, true);
 
-    runTasks($logFilePath, $logFilePathRaw, $logFIlePathHTML, $tasks);
+    runTasks($logFilePath, $logFilePathRaw, $logFIlePathHTML, $logFilePathFRaw, $tasks);
 }
 
 function createLogHtml($title, $bodyContent)
@@ -741,6 +755,7 @@ function runTasks(
     string $lofgilePath,
     string $logFilePathRaw,
     string $logFilePathHTML,
+    string $logFilePathFRaw,
     array $tasks,
 ) {
     global $statusFile, $config;
@@ -772,6 +787,7 @@ function runTasks(
     $failedTask = '';
     $fullLog = 'START: '.date('Y-m-d H:i:s')."\n";
     $fullLogRaw = 'START: '.date('Y-m-d H:i:s')."\n";
+    $fullLogFRaw = 'START: '.date('Y-m-d H:i:s')."\n";
     $htmlLogContent = '<h1>Deployment Log - Started at '.date('Y-m-d H:i:s')."</h1>\n";
 
     // Init the statusfile with pending status for all tasks
@@ -833,6 +849,7 @@ function runTasks(
         // Put separators
         $fullLog .= "\n+---------------------------------------------+\n";
         $fullLogRaw .= "\n+---------------------------------------------+\n";
+        $fullLogFRaw .= "\n+---------------------------------------------+\n";
         $htmlLogContent .= '<hr>';
         $fullLog .= "[TASK]: $taskToRunName";
         $htmlLogContent .= "<h2>$taskToRunName</h2>\n";
@@ -910,22 +927,26 @@ function runTasks(
                         if (preg_match('/^__STDOUT_EOF__(.*)$/', trim($line), $m)) {
                             $exitCode = (int) $m[1];
                             $stdoutDone = true;
+                            $fullLogFRaw .= '[STDOUT] '.trim($line)."\n";
                         } else {
                             $stdout .= $line;
                             $statusData['current_output'] .= $line;
                             $taskStatus[$indx]['output'] .= $line;
                             $fullLogRaw .= '['.date('Y-m-d H:i:s')."][info  ] $line";
+                            $fullLogFRaw .= '[STDOUT] '.$line;
                             $htmlLogContent .= htmlspecialchars($line);
                         }
                     } else {
                         // Match __STDERR_EOF__123 format
                         if (preg_match('/^__STDERR_EOF__(.*)$/', trim($line), $m)) {
                             $stderrDone = true;
+                            $fullLogFRaw .= '[STDERR] '.trim($line)."\n";
                         } else {
                             $stderr .= $line;
                             $statusData['current_output'] .= $line;
                             $taskStatus[$indx]['output'] .= $line;
                             $fullLogRaw .= '['.date('Y-m-d H:i:s')."][error ] $line";
+                            $fullLogFRaw .= '[STDERR] '.$line;
                             $htmlLogContent .= "<span style='color:red;'>".htmlspecialchars($line).'</span>';
                         }
                     }
@@ -974,6 +995,7 @@ function runTasks(
 
     $fullLog .= "\n=============================================\n";
     $fullLogRaw .= "\n=============================================\n";
+    $fullLogFRaw .= "\n=============================================\n";
 
     $duration = round(microtime(true) - $startTime, 2);
 
@@ -983,6 +1005,7 @@ function runTasks(
     // Update logs after each task
     file_put_contents($lofgilePath, $fullLog."\nEND. Duration: {$duration}s");
     file_put_contents($logFilePathRaw, $fullLogRaw."\nEND. Duration: {$duration}s");
+    file_put_contents($logFilePathFRaw, $fullLogFRaw."\nEND. Duration: {$duration}s");
     file_put_contents($logFilePathHTML, createLogHtml("Deployment Log - $taskToRunName", $htmlLogContent));
 
     // Update status
@@ -1196,6 +1219,17 @@ function showLastLog()
     $logs = glob($config['logs_path'].'/*.log');
     if (! $logs)
         exit('No logs available.');
+    usort($logs, fn ($a, $b) => filemtime($b) - filemtime($a));
+    header('Content-Type: text/plain');
+    readfile($logs[0]);
+}
+
+function showLastLogFRaw()
+{
+    global $config;
+    $logs = glob($config['logs_path'].'/*.fraw');
+    if (! $logs)
+        exit('No fraw logs available.');
     usort($logs, fn ($a, $b) => filemtime($b) - filemtime($a));
     header('Content-Type: text/plain');
     readfile($logs[0]);
