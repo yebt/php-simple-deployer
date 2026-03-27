@@ -355,41 +355,41 @@ function actionClearHistory()
 function actionDeployStop()
 {
     global $statusFile;
-    
+
     // Security check
     validateSecurity();
-    
+
     // Check if there's a deployment running
-    if (!file_exists($statusFile)) {
+    if (! file_exists($statusFile)) {
         http_response_code(400);
         header('Content-Type: application/json');
         echo json_encode(['success' => false, 'message' => 'No deployment in progress']);
         exit();
     }
-    
+
     $statusData = json_decode(file_get_contents($statusFile), true);
-    
+
     // Check if it's actually running
-    if (!isset($statusData['running']) || !$statusData['running']) {
+    if (! isset($statusData['running']) || ! $statusData['running']) {
         http_response_code(400);
         header('Content-Type: application/json');
         echo json_encode(['success' => false, 'message' => 'No deployment running']);
         exit();
     }
-    
+
     // Kill all PHP processes that are running deployment
     // This will catch the shell process (stdbuf -o0 -e0 bash)
     $cmd = "pkill -f 'stdbuf -o0 -e0 bash' || pkill -P $$ 2>/dev/null";
     shell_exec($cmd);
-    
+
     // Update status to stopped
     $statusData['running'] = false;
     $statusData['finished'] = true;
     $statusData['stopped_at'] = date('Y-m-d H:i:s');
     $statusData['task'] = 'DEPLOYMENT STOPPED BY USER';
-    
+
     file_put_contents($statusFile, json_encode($statusData));
-    
+
     header('Content-Type: application/json');
     echo json_encode(['success' => true, 'message' => 'Deployment stopped']);
     exit();
@@ -405,13 +405,13 @@ function validateSecurity()
         return;
     if (isset($_GET['manual']) && $_GET['manual'] === '1')
         return;
-    
+
     // Allow requests from localhost/127.0.0.1 (UI requests) without token
     $clientIP = $_SERVER['REMOTE_ADDR'] ?? '';
     if ($clientIP === 'localhost' || $clientIP === '127.0.0.1' || $clientIP === '::1') {
         return;
     }
-    
+
     $headers = getallheaders();
     $token = $headers['X-Deploy-Token'] ?? $_GET['token'] ?? '';
     if ($token !== $config['secure_token']) {
@@ -452,7 +452,8 @@ function convertYmlToJson($ymlPath)
     $yqPath = env('YQ_PATH');
 
     // Execute yq to convert YML to JSON with error output
-    $cmd = escapeshellcmd("$yqPath -o=json '$ymlPath' 2>&1");
+    // Print in console debug
+    $cmd = escapeshellcmd("$yqPath -o json '$ymlPath'");
     $output = shell_exec($cmd);
 
     if ($output === null || $output === false) {
@@ -460,7 +461,7 @@ function convertYmlToJson($ymlPath)
     }
 
     $trimmed = trim($output);
-    
+
     // Check if there's an error in the output
     if (stripos($trimmed, 'error') !== false || stripos($trimmed, 'failed') !== false) {
         return null;
@@ -479,27 +480,29 @@ function validateYqlPathForYml()
 {
     global $config;
     $instructionsFile = $config['instructions'];
-    
+
     // Check if it's a YML file
-    if (strtolower(pathinfo($instructionsFile, PATHINFO_EXTENSION)) === 'yml' 
-        || strtolower(pathinfo($instructionsFile, PATHINFO_EXTENSION)) === 'yaml') {
+    if (
+        strtolower(pathinfo($instructionsFile, PATHINFO_EXTENSION)) === 'yml'
+        || strtolower(pathinfo($instructionsFile, PATHINFO_EXTENSION)) === 'yaml'
+    ) {
         $yqPath = env('YQ_PATH');
         if (! $yqPath) {
             return 'YQ_PATH environment variable is not set. Required for processing YAML files.';
         }
-        
+
         // Check if yq binary exists
-        if (!file_exists($yqPath)) {
+        if (! file_exists($yqPath)) {
             return "YQ binary not found at path: $yqPath";
         }
-        
+
         // Check if it's a regular file
-        if (!is_file($yqPath)) {
+        if (! is_file($yqPath)) {
             return "YQ path is not a regular file: $yqPath";
         }
-        
+
         // Check if it's executable, if not try to fix it
-        if (!is_executable($yqPath)) {
+        if (! is_executable($yqPath)) {
             // Try to make it executable
             if (@chmod($yqPath, 0755)) {
                 echo "[INFO] YQ binary permissions fixed: chmod +x applied to $yqPath\n";
@@ -507,7 +510,7 @@ function validateYqlPathForYml()
                 return "YQ binary is not executable and cannot fix permissions. Run: chmod +x $yqPath";
             }
         }
-        
+
         // Verify yq works by running version command
         $testCmd = escapeshellcmd("$yqPath --version");
         $testOutput = shell_exec($testCmd.' 2>&1');
@@ -515,6 +518,7 @@ function validateYqlPathForYml()
             return "YQ binary not working at path: $yqPath";
         }
     }
+
     return null;
 }
 
@@ -552,12 +556,14 @@ function validateDeploymentConfig()
         if ($ext === 'yml' || $ext === 'yaml') {
             return 'Failed to convert YAML to JSON. Check YQL binary or YAML syntax.';
         }
+
         return 'Failed to read or convert instructions file.';
     }
 
     $tasks = json_decode($jsonContent, true);
     if (is_null($tasks)) {
         $jsonError = json_last_error_msg();
+
         return "Invalid JSON format in instructions file: $jsonError";
     }
 
@@ -625,242 +631,6 @@ function validateJsonContent()
 
     return null;
 }
-
-// ORIGINAL
-/*
- * function executeDeployment()
- * {
- * global $config, $statusFile;
- *
- * // Validate required config variables
- * $requiredVars = [
- * 'project_path' => $config['project_path'],
- * 'instructions' => $config['instructions'],
- * ];
- * foreach ($requiredVars as $label => $value) {
- * if (empty($value) || ! file_exists($value) && $label === 'project_path') {
- * http_response_code(400);
- * exit("Error: Configuración inválida o faltante: $label");
- * }
- * }
- *
- * if (file_exists($statusFile)) {
- * $current = json_decode(file_get_contents($statusFile), true);
- * // Si el proceso anterior ya terminó, borramos el lock viejo para permitir el nuevo
- * if (isset($current['finished']) && $current['finished'] === true) {
- * unlink($statusFile);
- * } else {
- * http_response_code(409);
- * exit('Deployment already in progress.');
- * }
- * }
- *
- * $startTime = microtime(true);
- * $logFilename = 'deploy_'.date('Ymd_His').'.log';
- * $logPath = $config['logs_path'].'/'.$logFilename;
- * $logPathRaw = $config['logs_path'].'/'.$logFilename.'.rlog';
- * if (! file_exists($config['instructions']))
- * exit('Instruction file missing.');
- *
- * $jsonContent = file_get_contents($config['instructions']);
- * // Validate if the instructions file has valid JSON and a valid format:
- * $tasks = json_decode($jsonContent, true);
- * if (is_null($tasks)) {
- * sendTelegram(
- * buildReport(
- * $_SERVER['HTTP_HOST'] ?? 'localhost',
- * false,
- * 0,
- * '',
- * '',
- * 'Deployment started. Processing instructions...',
- * ),
- * );
- * exit('Invalid JSON in instructions file.');
- * }
- * $errInstructions = validateInstructions($tasks);
- * if ($errInstructions !== true) {
- * sendTelegram(
- * buildReport(
- * $_SERVER['HTTP_HOST'] ?? 'localhost',
- * false,
- * 0,
- * '',
- * '',
- * "Deployment started. Error in instructions: $errInstructions",
- * ),
- * );
- * exit($errInstructions);
- * }
- *
- * if (json_last_error() !== JSON_ERROR_NONE)
- * exit('Invalid JSON in instructions file.');
- *
- * file_put_contents($statusFile, json_encode([
- * 'running' => true,
- * 'task' => 'Starting...',
- * 'index' => 0,
- * 'total' => count($tasks),
- * 'start' => $startTime,
- * ]));
- * chdir($config['project_path']);
- * $success = true;
- * $failedTask = '';
- * $fullLog = 'START: '.date('Y-m-d H:i:s')."\n";
- * $fullLogRaw = 'START: '.date('Y-m-d H:i:s')."\n";
- *
- * $taskStatus = array_fill(0, count($tasks), ['status' => 'pending', 'name' => '']);
- * foreach ($tasks as $i => $t) {
- * $taskStatus[$i]['name'] = $t['name'] ?? 'Task '.($i + 1);
- * }
- *
- * foreach ($tasks as $index => $task) {
- * $taskStatus[$index]['status'] = 'running';
- *
- * $name = $task['name'] ?? 'Unnamed Task';
- * $commands = is_array($task['run']) ? $task['run'] : [$task['run']];
- *
- * file_put_contents($statusFile, json_encode([
- * 'running' => true,
- * 'task' => $name,
- * 'index' => $index + 1,
- * 'total' => count($tasks),
- * 'start' => $startTime,
- * 'history' => $taskStatus,
- * ]));
- *
- * // Separators
- * $fullLog .= "\n---------------------------------------------\n";
- * $fullLogRaw .= "\n---------------------------------------------\n";
- * $fullLog .= "\n[TASK]: $name\n";
- * $taskSuccess = true;
- * $errorOutput = '';
- *
- * foreach ($commands as $cmd) {
- * $fullLog .= "[CMD]: $cmd\n";
- * $fullLogRaw .= '['.date('Y-m-d H:i:s')."] $cmd\n";
- *
- * $process = proc_open(
- * $cmd,
- * [
- * 0 => ['pipe', 'r'],
- * 1 => ['pipe', 'w'],
- * 2 => ['pipe', 'w'],
- * ],
- * $pipes,
- * );
- *
- * if (is_resource($process)) {
- * fclose($pipes[0]); // We don't need stdin
- *
- * $cmdStdout = '';
- * $cmdStderr = '';
- *
- * while (true) {
- * $read = [$pipes[1], $pipes[2]];
- * $write = null;
- * $except = null;
- *
- * $res = stream_select($read, $write, $except, 1);
- *
- * if ($res > 0) {
- * foreach ($read as $pipe) {
- * $content = fread($pipe, 8192);
- * if ($pipe === $pipes[1]) {
- * $cmdStdout .= $content;
- * $fullLogRaw .= $content;
- * } else {
- * $cmdStderr .= $content;
- * }
- * }
- * }
- *
- * if (feof($pipes[1]) && feof($pipes[2])) {
- * break;
- * }
- *
- * $status = proc_get_status($process);
- * if (! $status['running'] && $res === 0) {
- * break;
- * }
- * }
- *
- * fclose($pipes[1]);
- * fclose($pipes[2]);
- * $exitCode = proc_close($process);
- *
- * $fullLog .= "STDOUT: $cmdStdout\nSTDERR: $cmdStderr\nEXIT: $exitCode\n";
- *
- * if ($exitCode !== 0) {
- * $taskSuccess = false;
- * $errorOutput = $cmdStderr ?: $cmdStdout;
- * break;
- * }
- * } else {
- * $taskSuccess = false;
- * $errorOutput = "Failed to open process: $cmd";
- * $fullLog .= "ERROR: $errorOutput\n";
- * break;
- * }
- * }
- *
- * if ($taskSuccess) {
- * $taskStatus[$index]['status'] = 'success';
- * } else {
- * $success = false;
- * $failedTask = $name;
- * $taskStatus[$index]['status'] = 'failed';
- * // Guardamos el último estado antes de salir por error
- * file_put_contents($statusFile, json_encode([
- * 'running' => false, // Detener animación en live si falló
- * 'task' => "FAILED: $name",
- * 'index' => $index + 1,
- * 'total' => count($tasks),
- * 'history' => $taskStatus,
- * ]));
- * break;
- * }
- * }
- * // ================================================================================
- * $duration = round(microtime(true) - $startTime, 2);
- *
- * file_put_contents($logPath, $fullLog."\nEND. Duration: {$duration}s");
- * file_put_contents($logPathRaw, $fullLogRaw."\nEND. Duration: {$duration}s");
- *
- * // unlink($statusFile);
- * file_put_contents($statusFile, json_encode([
- * 'running' => false, // Is stopped
- * 'finished' => true,
- * 'success' => $success,
- * 'task' => $success ? 'Deployment Finished Successfully' : 'Deployment Failed',
- * 'index' => $index + 1,
- * 'total' => count($tasks),
- * 'start' => $startTime,
- * 'duration' => $duration,
- * 'history' => $taskStatus,
- * 'log_file' => $logFilename,
- * ]));
- *
- * $protocol = isset($_SERVER['HTTPS']) ? 'https://' : 'http://';
- *
- * $host = defined('CLI_HOST') ? CLI_HOST : $_SERVER['HTTP_HOST'] ?? 'localhost';
- * $logfileNameWithoutExt = pathinfo($logFilename, PATHINFO_FILENAME);
- * $logUrl = "$protocol{$host}/log/rview/{$logfileNameWithoutExt}";
- *
- * sendTelegram(
- * buildReport(
- * $host,
- * $success,
- * $duration,
- * $logUrl,
- * $failedTask ?? '',
- * $errorOutput ?? '',
- * ),
- * );
- * if (! isset($_GET['manual']))
- * echo 'Done.';
- * }
- */
 
 function executeDeploymentWithSingleShellProccess()
 {
@@ -1029,6 +799,7 @@ function runTasks(
         $pipes,
         realpath($cmdsCWD),
     );
+
     if (! is_resource($process)) {
         file_put_contents($lofgilePath, "ERROR: Failed to start shell process\n", FILE_APPEND);
         file_put_contents($logFilePathRaw, "ERROR: Failed to start shell process\n", FILE_APPEND);
@@ -1073,15 +844,18 @@ function runTasks(
             $fullLog .= "\n[CMD]: $cmd\n";
             $fullLogRaw .= '['.date('Y-m-d H:i:s')."] $cmd\n";
             $cmdHtml = explode('\\n', $cmd);
-            $cmdHtml = implode("<br>", array_map('htmlspecialchars', $cmdHtml));
+            $cmdHtml = implode('<br>', array_map('htmlspecialchars', $cmdHtml));
             $htmlLogContent .= "<h3>Command: $cmdHtml</h3>\n";
 
-            // Wrap multiline scripts properly with 'set -e' to stop on first error
-            // This ensures exit codes are properly propagated, especially for multi-line scripts
+            // Wrap command with strict error handling
+            // Use trap to ensure exit code is always captured, even on errors
+            // Single quotes in trap to prevent variable expansion issues
+
             $wrapped = sprintf(
-                "set -e\n{\n%s\n}\n__exit__=$?\necho '__STDOUT_EOF__'\"\$__exit__\"\necho '__STDERR_EOF__'\"\$__exit__\" >&2\n",
-                $cmd
+                "{\n%s\n}\n__exit__=$?\necho '__STDOUT_EOF__'\"\$__exit__\"\necho '__STDERR_EOF__'\"\$__exit__\" >&2\n",
+                $cmd,
             );
+
             fwrite($pipes[0], $wrapped); // Send command to shell
 
             $stdoutDone = false;
@@ -1097,7 +871,8 @@ function runTasks(
                 $except = null;
 
                 $streamResult = stream_select($read, $write, $except, 5);
-                
+                $status = proc_get_status($process);
+
                 if ($streamResult === false) {
                     // stream_select error
                     $stderr .= "[ERROR] stream_select failed\n";
@@ -1113,6 +888,14 @@ function runTasks(
                         break;
                     }
                     continue;
+                }
+
+                if ($status['running'] === false && $streamResult > 0) {
+                    // Process exited but we still have streams to read
+                    // We'll continue to read until we get EOF markers
+                    $stderr .= 'Shell CLosed';
+                    $commandsToRun = []; // Stop sending more commands
+                    break;
                 }
 
                 $hasOutput = false;
@@ -1152,7 +935,7 @@ function runTasks(
                     $statusData['history'] = $taskStatus;
                     updateLiveStatus($statusData);
                 }
-                
+
                 // Reset timeout counter if we got output
                 if ($hasOutput) {
                     $timeoutCounter = 0;
@@ -1162,7 +945,10 @@ function runTasks(
             $htmlLogContent .= "</code></pre>\n";
             $fullLog .= "STDOUT: $stdout\nSTDERR: $stderr\nEXIT: $exitCode\n";
 
-            if ($exitCode !== 0) {
+            // Check for command failure - either non-zero exit code or error patterns in stderr
+            $hasErrorPatterns = preg_match('/(npm error|error:|failed|Error:|ERR!)/i', $stderr);
+
+            if ($exitCode !== 0 || $hasErrorPatterns) {
                 $taskSuccess = false;
                 $errorOutput = $stderr ?: $stdout;
                 break;
@@ -1346,8 +1132,7 @@ function showSpecificLog($file, $type = 'text/plain')
 }
 
 function renderValidationError($errorMessage)
-{
-    ?>
+{ ?>
     <!DOCTYPE html>
     <html lang="en">
     <head>
@@ -1403,8 +1188,7 @@ function renderValidationError($errorMessage)
         </div>
     </body>
     </html>
-    <?php
-}
+    <?php }
 
 function showLastLog()
 {
