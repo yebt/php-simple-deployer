@@ -1,4 +1,4 @@
-![banner](./assets/banner.jpg) 
+![banner](./assets/banner.jpg)
 
 # SPHPD — Simple PHP Deployer
 
@@ -76,21 +76,21 @@ Open `http://localhost:5173` to access the dashboard.
 
 All configuration is done via `.env`:
 
-| Variable                  | Default       | Description                                                     |
-|---------------------------|---------------|-----------------------------------------------------------------|
-| `PROJECT_PATH`            | *(required)*  | Absolute path where deployment commands run                     |
-| `INSTRUCTIONS_FILE`       | `deploy.json` | Path to your instruction file (JSON or YAML)                    |
-| `LOGS_PATH`               | `./logs`      | Directory where deployment logs are stored                      |
-| `SECURITY_TOKEN`          |               | Secret token required for webhook requests (header or query)    |
-| `WEBHOOK_METHOD`          | `POST`        | HTTP method accepted by the webhook (`GET` or `POST`)           |
-| `LOAD_USER`               |               | HTTP Basic Auth username (optional)                             |
-| `LOAD_PASS`               |               | HTTP Basic Auth password (optional)                             |
-| `TELEGRAM_NOTIFICATIONS`  | `true`        | Enable/disable Telegram notifications                           |
-| `TELEGRAM_BOT_TOKEN`      |               | Telegram bot token                                              |
-| `TELEGRAM_CHAT_ID`        |               | Telegram chat or group ID                                       |
-| `TELEGRAM_THREAD_ID`      |               | Telegram thread/topic ID (optional, for supergroups)            |
-| `YQ_PATH`                 |               | Path to the `yq` binary (required for YAML instruction files)   |
-| `MODE`                    | `production`  | Set to any non-`production` value to enable the `/debugdeploy` route |
+| Variable                 | Default       | Description                                                          |
+| ------------------------ | ------------- | -------------------------------------------------------------------- |
+| `PROJECT_PATH`           | _(required)_  | Absolute path where deployment commands run                          |
+| `INSTRUCTIONS_FILE`      | `deploy.json` | Path to your instruction file (JSON or YAML)                         |
+| `LOGS_PATH`              | `./logs`      | Directory where deployment logs are stored                           |
+| `SECURITY_TOKEN`         |               | Secret token required for webhook requests (header or query)         |
+| `WEBHOOK_METHOD`         | `POST`        | HTTP method accepted by the webhook (`GET` or `POST`)                |
+| `LOAD_USER`              |               | HTTP Basic Auth username (optional)                                  |
+| `LOAD_PASS`              |               | HTTP Basic Auth password (optional)                                  |
+| `TELEGRAM_NOTIFICATIONS` | `true`        | Enable/disable Telegram notifications                                |
+| `TELEGRAM_BOT_TOKEN`     |               | Telegram bot token                                                   |
+| `TELEGRAM_CHAT_ID`       |               | Telegram chat or group ID                                            |
+| `TELEGRAM_THREAD_ID`     |               | Telegram thread/topic ID (optional, for supergroups)                 |
+| `YQ_PATH`                |               | Path to the `yq` binary (required for YAML instruction files)        |
+| `MODE`                   | `production`  | Set to any non-`production` value to enable the `/debugdeploy` route |
 
 ---
 
@@ -98,33 +98,32 @@ All configuration is done via `.env`:
 
 Each instruction file is an **array of tasks**. A task has:
 
-| Field  | Type              | Description                           |
-|--------|-------------------|---------------------------------------|
-| `name` | string            | Human-readable label shown in the UI  |
-| `run`  | string or array   | Shell command(s) to execute in order  |
+| Field  | Type            | Description                          |
+| ------ | --------------- | ------------------------------------ |
+| `name` | string          | Human-readable label shown in the UI |
+| `run`  | string or array | Shell command(s) to execute in order |
 
 Commands within a task share the same shell session, so environment variables exported in one command are available in subsequent ones.
 
 ### Examples
 
 **Single command:**
+
 ```json
 { "name": "Pull latest code", "run": "git pull origin main" }
 ```
 
 **Multiple commands (array):**
+
 ```json
 {
   "name": "Build",
-  "run": [
-    "export NODE_ENV=production",
-    "npm ci",
-    "npm run build"
-  ]
+  "run": ["export NODE_ENV=production", "npm ci", "npm run build"]
 }
 ```
 
 **Multi-line script (YAML block scalar):**
+
 ```yaml
 - name: "Deploy"
   run: |
@@ -137,25 +136,25 @@ Commands within a task share the same shell session, so environment variables ex
 
 ## Endpoints
 
-| Method      | Path                      | Description                                              |
-|-------------|---------------------------|----------------------------------------------------------|
-| `GET`       | `/`                       | Redirects to `/health`                                   |
-| `GET`       | `/health`                 | Main dashboard — history, config status, example         |
-| `GET/POST`  | `/webhook/deploy`         | Trigger deployment (waits for completion)                |
-| `GET/POST`  | `/webhook/deploy?manual=1`| Trigger deployment from the UI (background process)      |
-| `POST`      | `/webhook/deploy/nowait`  | Trigger deployment — returns `202` immediately           |
-| `GET`       | `/status/live`            | Real-time live status page                               |
-| `GET`       | `/status/check`           | JSON: `{ "finished": true/false }`                       |
-| `GET`       | `/status/data`            | JSON: full current deployment status                     |
-| `GET`       | `/log/view?file=<name>`   | View a specific log file                                 |
-| `GET`       | `/log/rview/<id>`         | Raw `.log` view by ID                                    |
-| `GET`       | `/log/bview/<id>`         | Base raw `.log.rlog` view by ID                          |
-| `GET`       | `/log/htmlview/<id>`      | HTML log view by ID                                      |
-| `GET`       | `/log/last`               | View the most recent log                                 |
-| `GET`       | `/log/lasthtml`           | HTML view of the most recent log                         |
-| `POST`      | `/deploy/stop`            | Stop the currently running deployment                    |
-| `GET`       | `/test-notify`            | Send a test Telegram notification                        |
-| `GET`       | `/clear-history`          | Clear all deployment log history                         |
+| Method     | Path                       | Description                                         |
+| ---------- | -------------------------- | --------------------------------------------------- |
+| `GET`      | `/`                        | Redirects to `/health`                              |
+| `GET`      | `/health`                  | Main dashboard — history, config status, example    |
+| `GET/POST` | `/webhook/deploy`          | Trigger deployment (waits for completion)           |
+| `GET/POST` | `/webhook/deploy?manual=1` | Trigger deployment from the UI (background process) |
+| `POST`     | `/webhook/deploy/nowait`   | Trigger deployment — returns `202` immediately      |
+| `GET`      | `/status/live`             | Real-time live status page                          |
+| `GET`      | `/status/check`            | JSON: `{ "finished": true/false }`                  |
+| `GET`      | `/status/data`             | JSON: full current deployment status                |
+| `GET`      | `/log/view?file=<name>`    | View a specific log file                            |
+| `GET`      | `/log/rview/<id>`          | Raw `.log` view by ID                               |
+| `GET`      | `/log/bview/<id>`          | Base raw `.log.rlog` view by ID                     |
+| `GET`      | `/log/htmlview/<id>`       | HTML log view by ID                                 |
+| `GET`      | `/log/last`                | View the most recent log                            |
+| `GET`      | `/log/lasthtml`            | HTML view of the most recent log                    |
+| `POST`     | `/deploy/stop`             | Stop the currently running deployment               |
+| `GET`      | `/test-notify`             | Send a test Telegram notification                   |
+| `GET`      | `/clear-history`           | Clear all deployment log history                    |
 
 ### Webhook Security
 
