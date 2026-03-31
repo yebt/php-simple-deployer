@@ -83,6 +83,10 @@ $config = [
     'thread_id' => env('TELEGRAM_THREAD_ID') ?? null,
     'secure_token' => env('SECURITY_TOKEN') ?? '',
     'webhook_method' => env('WEBHOOK_METHOD') ?? $defaults['WEBHOOK_METHOD'][0],
+    'gitlab_token' => env('GITLAB_TOKEN') ?? '',
+    'gitlab_base_url' => env('GITLAB_BASE_URL') ?? 'https://gitlab.com',
+    'artifact_deploy_dir' => env('ARTIFACT_DEPLOY_DIR') ?? __DIR__.'/artifact-deploy',
+    'artifact_instructions' => env('ARTIFACT_INSTRUCTIONS_FILE') ?? 'artifact-deploy.json',
 ];
 
 // Ensure logs directory exists
@@ -105,6 +109,13 @@ $statusFile = $config['logs_path'].'/.current_status';
 if (isset($argv[1]) && $argv[1] === 'run-deploy') {
     define('CLI_HOST', $argv[2] ?? 'localhost');
     executeDeploymentWithSingleShellProccess();
+    exit();
+}
+
+// Execute artifact deployment if called from CLI
+if (isset($argv[1]) && $argv[1] === 'run-artifact-deploy') {
+    define('CLI_HOST', $argv[2] ?? 'localhost');
+    executeArtifactDeployment($argv[3] ?? null, $argv[4] ?? 'main', $argv[5] ?? 'build');
     exit();
 }
 
@@ -161,6 +172,8 @@ if (env('MODE', 'production') !== 'production') {
 }
 $router->add('/webhook/deploy', 'actionWebhookDeploy');
 $router->add('/webhook/deploy/nowait', 'actionWebhookDeployNoWait');
+$router->add('/webhook/artifact-deploy', 'actionWebhookArtifactDeploy');
+$router->add('/webhook/artifact-deploy/nowait', 'actionWebhookArtifactDeployNoWait');
 
 $router->add('/alllogs', 'actionLogsView');
 $router->add('/log/view', 'actionLogView');
@@ -286,6 +299,71 @@ function actionWebhookDeployNoWait()
             'message' => 'Deployment initiated in background',
         ])
     ;
+}
+
+function actionWebhookArtifactDeploy()
+{
+    global $method;
+    validateSecurity();
+
+    if ($method !== 'POST') {
+        http_response_code(405);
+        exit('Method Not Allowed');
+    }
+
+    $input = json_decode(file_get_contents('php://input'), true);
+    $projectId = $input['project_id'] ?? null;
+    $branch = $input['branch'] ?? 'main';
+    $job = $input['job'] ?? 'build';
+
+    if (! $projectId) {
+        http_response_code(400);
+        header('Content-Type: application/json');
+        echo json_encode(['error' => 'Missing project_id']);
+        exit();
+    }
+
+    executeArtifactDeployment($projectId, $branch, $job);
+}
+
+function actionWebhookArtifactDeployNoWait()
+{
+    global $method;
+    validateSecurity();
+
+    if ($method !== 'POST') {
+        http_response_code(405);
+        exit('Method Not Allowed');
+    }
+
+    $input = json_decode(file_get_contents('php://input'), true);
+    $projectId = $input['project_id'] ?? null;
+    $branch = $input['branch'] ?? 'main';
+    $job = $input['job'] ?? 'build';
+
+    if (! $projectId) {
+        http_response_code(400);
+        header('Content-Type: application/json');
+        echo json_encode(['error' => 'Missing project_id']);
+        exit();
+    }
+
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    exec(
+        'php '.__FILE__.' run-artifact-deploy '
+        .escapeshellarg($host).' '
+        .escapeshellarg($projectId).' '
+        .escapeshellarg($branch).' '
+        .escapeshellarg($job)
+        .' > /dev/null 2>&1 &',
+    );
+
+    http_response_code(202);
+    header('Content-Type: application/json');
+    echo json_encode([
+        'status' => 'accepted',
+        'message' => 'Artifact deployment initiated in background',
+    ]);
 }
 
 function actionLogView()
@@ -714,6 +792,155 @@ function executeDeploymentWithSingleShellProccess()
     runTasks($logFilePath, $logFilePathRaw, $logFIlePathHTML, $logFilePathFRaw, $tasks);
 }
 
+function executeArtifactDeployment(?string $projectId, string $branch = 'main', string $job = 'build')
+{
+    global $config, $statusFile;
+
+    if (empty($projectId)) {
+        http_response_code(400);
+        exit('Missing project_id');
+    }
+
+    // Check for concurrent deployment
+    if (file_exists($statusFile)) {
+        $current = json_decode(file_get_contents($statusFile), true);
+        if (isset($current['finished']) && $current['finished'] === true) {
+            unlink($statusFile);
+        } else {
+            http_response_code(409);
+            exit('Deployment already in progress.');
+        }
+    }
+
+    $host = defined('CLI_HOST') ? CLI_HOST : ($_SERVER['HTTP_HOST'] ?? 'localhost');
+
+    $gitlabToken = $config['gitlab_token'];
+    if (empty($gitlabToken)) {
+        sendTelegram(buildReport($host, false, 0, '', '', 'GITLAB_TOKEN not configured'));
+        http_response_code(500);
+        exit('GITLAB_TOKEN not configured');
+    }
+
+    $instructionsFile = $config['artifact_instructions'];
+    if (! file_exists($instructionsFile)) {
+        $msg = "Artifact instructions file not found: $instructionsFile";
+        sendTelegram(buildReport($host, false, 0, '', '', $msg));
+        http_response_code(500);
+        exit($msg);
+    }
+
+    // Prepare artifact deploy directory
+    $deployDir = $config['artifact_deploy_dir'];
+    if (! is_dir($deployDir)) {
+        mkdir($deployDir, 0755, true);
+    }
+
+    // Download artifact from GitLab
+    $artifactFile = $deployDir.'/artifact.zip';
+    $gitlabBase = rtrim($config['gitlab_base_url'], '/');
+    $artifactUrl = "{$gitlabBase}/api/v4/projects/{$projectId}/jobs/artifacts/{$branch}/download?job={$job}";
+
+    $fp = fopen($artifactFile, 'w');
+    if (! $fp) {
+        $msg = "Cannot write artifact file to: $artifactFile";
+        sendTelegram(buildReport($host, false, 0, '', '', $msg));
+        http_response_code(500);
+        exit($msg);
+    }
+
+    $ch = curl_init($artifactUrl);
+    curl_setopt_array($ch, [
+        CURLOPT_FILE => $fp,
+        CURLOPT_HTTPHEADER => ["PRIVATE-TOKEN: $gitlabToken"],
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_FAILONERROR => true,
+    ]);
+    $result = curl_exec($ch);
+    $curlError = curl_error($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    fclose($fp);
+
+    if ($result === false) {
+        $msg = "Artifact download failed (HTTP $httpCode): $curlError";
+        sendTelegram(buildReport($host, false, 0, '', 'Download', $msg));
+        http_response_code(500);
+        exit($msg);
+    }
+
+    // Extract artifact
+    $extractDir = $deployDir.'/extracted';
+    if (is_dir($extractDir)) {
+        exec('rm -rf '.escapeshellarg($extractDir));
+    }
+    mkdir($extractDir, 0755, true);
+
+    if (! extractArtifact($artifactFile, $extractDir)) {
+        $msg = 'Failed to extract artifact';
+        sendTelegram(buildReport($host, false, 0, '', 'Extract', $msg));
+        http_response_code(500);
+        exit($msg);
+    }
+
+    // Validate and load instructions
+    $jsonContent = file_get_contents($instructionsFile);
+    $tasks = json_decode($jsonContent, true);
+    if (is_null($tasks)) {
+        $msg = 'Invalid JSON in artifact instructions file: '.json_last_error_msg();
+        sendTelegram(buildReport($host, false, 0, '', '', $msg));
+        http_response_code(500);
+        exit($msg);
+    }
+
+    $errInstructions = validateInstructions($tasks);
+    if ($errInstructions !== true) {
+        $msg = "Invalid artifact task instructions: $errInstructions";
+        sendTelegram(buildReport($host, false, 0, '', '', $msg));
+        http_response_code(500);
+        exit($msg);
+    }
+
+    // Setup log files
+    $logFileName = 'artifact_deploy_'.date('Ymd_His').'.log';
+    $logFilePath = $config['logs_path'].'/'.$logFileName;
+    $logFilePathRaw = $config['logs_path'].'/'.$logFileName.'.rlog';
+    $logFilePathHTML = $config['logs_path'].'/'.$logFileName.'.html';
+    $logFilePathFRaw = $config['logs_path'].'/'.$logFileName.'.fraw';
+
+    // Run tasks using the extracted directory as CWD
+    runTasks($logFilePath, $logFilePathRaw, $logFilePathHTML, $logFilePathFRaw, $tasks, $extractDir);
+}
+
+function extractArtifact(string $file, string $destDir): bool
+{
+    $ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+
+    // ZIP: use PHP's built-in ZipArchive
+    if ($ext === 'zip') {
+        $zip = new ZipArchive();
+        if ($zip->open($file) === true) {
+            $zip->extractTo($destDir);
+            $zip->close();
+
+            return true;
+        }
+
+        return false;
+    }
+
+    // RAR: try unrar, then fall through to 7z
+    if ($ext === 'rar') {
+        exec('unrar x -o+ '.escapeshellarg($file).' '.escapeshellarg($destDir).'/', $out, $code);
+        if ($code === 0)
+            return true;
+    }
+
+    // Universal fallback: 7z (supports zip, rar, tar, gz, bz2, xz, etc.)
+    exec('7z x '.escapeshellarg($file).' -o'.escapeshellarg($destDir).' -y', $out, $code);
+
+    return $code === 0;
+}
+
 function createLogHtml($title, $bodyContent)
 {
     // @mago-format-ignore-next
@@ -763,6 +990,7 @@ function runTasks(
     string $logFilePathHTML,
     string $logFilePathFRaw,
     array $tasks,
+    ?string $cwd = null,
 ) {
     global $statusFile, $config;
 
@@ -786,7 +1014,7 @@ function runTasks(
     // Change execution directory to project path
     // NOTE: replazable for the action in proc_open
     // chdir($config['project_path']);
-    $cmdsCWD = $config['project_path'];
+    $cmdsCWD = $cwd ?? $config['project_path'];
 
     // initialize the flags
     $success = true;
