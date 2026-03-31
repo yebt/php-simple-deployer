@@ -1,0 +1,22 @@
+[
+  {
+    "name": "Show extracted files",
+    "run": "ls -la"
+  },
+  {
+    "name": "Install dependencies",
+    "run": [
+      "npm ci --prefer-offline"
+    ]
+  },
+  {
+    "name": "Build",
+    "run": "npm run build"
+  },
+  {
+    "name": "Copy to web root",
+    "run": [
+      "rsync -av --delete dist/ /var/www/html/"
+    ]
+  }
+]
