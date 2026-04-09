@@ -474,10 +474,14 @@ function actionDeployStop()
         exit();
     }
 
-    // Kill all PHP processes that are running deployment
-    // This will catch the shell process (stdbuf -o0 -e0 bash)
-    $cmd = "pkill -f 'stdbuf -o0 -e0 bash' || pkill -P $$ 2>/dev/null";
-    shell_exec($cmd);
+    // Kill the tracked process by PID (covers download/extract phases for artifact deploy)
+    if (! empty($statusData['pid'])) {
+        $pid = (int) $statusData['pid'];
+        shell_exec("kill -TERM $pid 2>/dev/null; sleep 1; kill -KILL $pid 2>/dev/null");
+    }
+
+    // Kill any child shell process (covers task execution phase for both deploy types)
+    shell_exec("pkill -f 'stdbuf -o0 -e0 bash' 2>/dev/null");
 
     // Update status to stopped
     $statusData['running'] = false;
@@ -812,21 +816,86 @@ function executeArtifactDeployment(?string $projectId, string $branch = 'main', 
         }
     }
 
+    // Generate log filenames immediately so we can log the download/extract phases
+    $logFileName = 'artifact_deploy_'.date('Ymd_His').'.log';
+    $logFilePath = $config['logs_path'].'/'.$logFileName;
+    $logFilePathRaw = $config['logs_path'].'/'.$logFileName.'.rlog';
+    $logFilePathHTML = $config['logs_path'].'/'.$logFileName.'.html';
+    $logFilePathFRaw = $config['logs_path'].'/'.$logFileName.'.fraw';
+
+    $startTime = microtime(true);
     $host = defined('CLI_HOST') ? CLI_HOST : ($_SERVER['HTTP_HOST'] ?? 'localhost');
 
+    // Lock the status file IMMEDIATELY to prevent race conditions during download/extract.
+    // Any concurrent request will see this and get a 409 before the download even starts.
+    file_put_contents($statusFile, json_encode([
+        'running'  => true,
+        'finished' => false,
+        'task'     => 'Downloading artifact...',
+        'index'    => 0,
+        'total'    => 0,
+        'pid'      => getmypid(),
+        'log_file' => $logFileName,
+        'start'    => $startTime,
+    ]));
+
+    // Initialize fraw log for pre-run phases (download, extract)
+    $preLog    = 'START: '.date('Y-m-d H:i:s')."\n";
+    $preLogRaw = 'START: '.date('Y-m-d H:i:s')."\n";
+    file_put_contents($logFilePathFRaw, $preLog);
+
+    // Helper: write a line to all pre-run logs
+    $logLine = function (string $line, string $level = 'info') use (&$preLog, &$preLogRaw, $logFilePathFRaw) {
+        $ts = date('Y-m-d H:i:s');
+        $preLog    .= "[PRE][$level] $line\n";
+        $preLogRaw .= "[$ts][$level] $line\n";
+        file_put_contents($logFilePathFRaw, "[PRE][$level] $line\n", FILE_APPEND);
+    };
+
+    // Helper: fail during pre-run phase — writes logs, updates status, notifies, exits
+    $failArtifact = function (string $msg, string $task = '') use (
+        &$preLog, &$preLogRaw,
+        $logFilePath, $logFilePathRaw, $logFilePathHTML, $logFilePathFRaw,
+        $statusFile, $host, $startTime, $logFileName
+    ) {
+        $duration = round(microtime(true) - $startTime, 2);
+        $protocol = isset($_SERVER['HTTPS']) ? 'https://' : 'http://';
+        $logId = pathinfo($logFilePath, PATHINFO_FILENAME);
+        $logUrl = "$protocol{$host}/log/rview/{$logId}";
+
+        file_put_contents($logFilePath, $preLog."\nERROR: $msg\nEND. Duration: {$duration}s");
+        file_put_contents($logFilePathRaw, $preLogRaw."\nERROR: $msg\nEND. Duration: {$duration}s");
+        file_put_contents($logFilePathFRaw, "[PRE][error] $msg\nEND. Duration: {$duration}s\n", FILE_APPEND);
+        file_put_contents($logFilePathHTML, createLogHtml(
+            'Artifact Deploy Log',
+            '<h1>Artifact Deploy Log</h1><p style="color:red;font-weight:bold;">ERROR: '
+                .htmlspecialchars($msg).'</p><p>Duration: '.$duration.'s</p>',
+        ));
+        file_put_contents($statusFile, json_encode([
+            'running'  => false,
+            'finished' => true,
+            'success'  => false,
+            'task'     => "FAILED: $msg",
+            'duration' => $duration,
+            'log_file' => $logFileName,
+        ]));
+        sendTelegram(buildReport($host, false, $duration, $logUrl, $task ?: 'Artifact Deploy', $msg));
+        http_response_code(500);
+        exit($msg);
+    };
+
+    // Validate required config
     $gitlabToken = $config['gitlab_token'];
     if (empty($gitlabToken)) {
-        sendTelegram(buildReport($host, false, 0, '', '', 'GITLAB_TOKEN not configured'));
-        http_response_code(500);
-        exit('GITLAB_TOKEN not configured');
+        $logLine('GITLAB_TOKEN not configured', 'error');
+        $failArtifact('GITLAB_TOKEN not configured');
     }
 
     $instructionsFile = $config['artifact_instructions'];
     if (! file_exists($instructionsFile)) {
         $msg = "Artifact instructions file not found: $instructionsFile";
-        sendTelegram(buildReport($host, false, 0, '', '', $msg));
-        http_response_code(500);
-        exit($msg);
+        $logLine($msg, 'error');
+        $failArtifact($msg);
     }
 
     // Prepare artifact deploy directory
@@ -840,12 +909,14 @@ function executeArtifactDeployment(?string $projectId, string $branch = 'main', 
     $gitlabBase = rtrim($config['gitlab_base_url'], '/');
     $artifactUrl = "{$gitlabBase}/api/v4/projects/{$projectId}/jobs/artifacts/{$branch}/download?job={$job}";
 
+    $logLine("Downloading artifact — project: $projectId | branch: $branch | job: $job");
+    $logLine("URL: $artifactUrl");
+
     $fp = fopen($artifactFile, 'w');
     if (! $fp) {
         $msg = "Cannot write artifact file to: $artifactFile";
-        sendTelegram(buildReport($host, false, 0, '', '', $msg));
-        http_response_code(500);
-        exit($msg);
+        $logLine($msg, 'error');
+        $failArtifact($msg);
     }
 
     $ch = curl_init($artifactUrl);
@@ -863,10 +934,24 @@ function executeArtifactDeployment(?string $projectId, string $branch = 'main', 
 
     if ($result === false) {
         $msg = "Artifact download failed (HTTP $httpCode): $curlError";
-        sendTelegram(buildReport($host, false, 0, '', 'Download', $msg));
-        http_response_code(500);
-        exit($msg);
+        $logLine($msg, 'error');
+        $failArtifact($msg, 'Download');
     }
+
+    $fileSize = round(filesize($artifactFile) / 1024, 1);
+    $logLine("Artifact downloaded successfully — {$fileSize} KB (HTTP $httpCode)");
+
+    // Update status: extracting
+    file_put_contents($statusFile, json_encode([
+        'running'  => true,
+        'finished' => false,
+        'task'     => 'Extracting artifact...',
+        'index'    => 0,
+        'total'    => 0,
+        'pid'      => getmypid(),
+        'log_file' => $logFileName,
+        'start'    => $startTime,
+    ]));
 
     // Extract artifact
     $extractDir = $deployDir.'/extracted';
@@ -875,40 +960,37 @@ function executeArtifactDeployment(?string $projectId, string $branch = 'main', 
     }
     mkdir($extractDir, 0755, true);
 
+    $logLine("Extracting artifact to: $extractDir");
+
     if (! extractArtifact($artifactFile, $extractDir)) {
-        $msg = 'Failed to extract artifact';
-        sendTelegram(buildReport($host, false, 0, '', 'Extract', $msg));
-        http_response_code(500);
-        exit($msg);
+        $logLine('Failed to extract artifact', 'error');
+        $failArtifact('Failed to extract artifact', 'Extract');
     }
+
+    $logLine("Artifact extracted successfully");
 
     // Validate and load instructions
     $jsonContent = file_get_contents($instructionsFile);
     $tasks = json_decode($jsonContent, true);
     if (is_null($tasks)) {
         $msg = 'Invalid JSON in artifact instructions file: '.json_last_error_msg();
-        sendTelegram(buildReport($host, false, 0, '', '', $msg));
-        http_response_code(500);
-        exit($msg);
+        $logLine($msg, 'error');
+        $failArtifact($msg);
     }
 
     $errInstructions = validateInstructions($tasks);
     if ($errInstructions !== true) {
         $msg = "Invalid artifact task instructions: $errInstructions";
-        sendTelegram(buildReport($host, false, 0, '', '', $msg));
-        http_response_code(500);
-        exit($msg);
+        $logLine($msg, 'error');
+        $failArtifact($msg);
     }
 
-    // Setup log files
-    $logFileName = 'artifact_deploy_'.date('Ymd_His').'.log';
-    $logFilePath = $config['logs_path'].'/'.$logFileName;
-    $logFilePathRaw = $config['logs_path'].'/'.$logFileName.'.rlog';
-    $logFilePathHTML = $config['logs_path'].'/'.$logFileName.'.html';
-    $logFilePathFRaw = $config['logs_path'].'/'.$logFileName.'.fraw';
+    $logLine("Instructions validated — ".count($tasks)." task(s) queued");
+    $logLine("Starting task execution in: $extractDir");
 
-    // Run tasks using the extracted directory as CWD
-    runTasks($logFilePath, $logFilePathRaw, $logFilePathHTML, $logFilePathFRaw, $tasks, $extractDir);
+    // Run tasks using the extracted directory as CWD.
+    // Pass pre-run log content so it is included in the final .log and .rlog files.
+    runTasks($logFilePath, $logFilePathRaw, $logFilePathHTML, $logFilePathFRaw, $tasks, $extractDir, $preLog, $preLogRaw);
 }
 
 function extractArtifact(string $file, string $destDir): bool
@@ -991,13 +1073,14 @@ function runTasks(
     string $logFilePathFRaw,
     array $tasks,
     ?string $cwd = null,
+    string $logPrefix = '',
+    string $logRawPrefix = '',
 ) {
     global $statusFile, $config;
 
     // Setup log files
     $startTime = microtime(true);
 
-    //stes
     $totalTaks = count($tasks);
 
     // Init status file for live view
@@ -1011,19 +1094,18 @@ function runTasks(
     ];
     updateLiveStatus($statusData);
 
-    // Change execution directory to project path
-    // NOTE: replazable for the action in proc_open
-    // chdir($config['project_path']);
     $cmdsCWD = $cwd ?? $config['project_path'];
 
     // initialize the flags
     $success = true;
     $failedTask = '';
-    $fullLog = 'START: '.date('Y-m-d H:i:s')."\n";
-    $fullLogRaw = 'START: '.date('Y-m-d H:i:s')."\n";
-    $fullLogFRaw = 'START: '.date('Y-m-d H:i:s')."\n";
+    // Prepend any pre-run log content (e.g. from artifact download/extract phase)
+    $fullLog = $logPrefix.'START: '.date('Y-m-d H:i:s')."\n";
+    $fullLogRaw = $logRawPrefix.'START: '.date('Y-m-d H:i:s')."\n";
+    $fullLogFRaw = 'START TASKS: '.date('Y-m-d H:i:s')."\n";
     $htmlLogContent = '<h1>Deployment Log - Started at '.date('Y-m-d H:i:s')."</h1>\n";
-    file_put_contents($logFilePathFRaw, $fullLogFRaw);
+    // Use FILE_APPEND so pre-run content written to fraw is preserved
+    file_put_contents($logFilePathFRaw, $fullLogFRaw, FILE_APPEND);
 
     // Init the statusfile with pending status for all tasks
     $taskStatus = [];
@@ -1621,6 +1703,7 @@ function renderHealthView()
     $serverDomain = $_SERVER['HTTP_HOST'] ?? 'Unknown Domain';
     $phpVersion = PHP_VERSION;
     $instructionExists = file_exists($config['instructions']);
+    $artifactInstructionExists = file_exists($config['artifact_instructions']);
     $logs = glob($config['logs_path'].'/*.log');
     usort($logs, fn ($a, $b) => filemtime($b) - filemtime($a));
     $lastLogs = array_slice($logs, 0, 5);
@@ -1715,6 +1798,39 @@ function renderHealthView()
                                     </div>
                                 </div>
                             <?php endforeach; ?>
+                        </div>
+                    </div>
+
+                    <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-5 rounded-lg shadow-sm dark:shadow-xl text-xs">
+                        <h2 class="text-slate-400 dark:text-slate-500 font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">Artifact Config</h2>
+                        <div class="space-y-3 text-[11px]">
+                            <?php
+                            $artifactVars = [
+                                ['label' => 'GitLab Token', 'isSet' => ! empty($config['gitlab_token'])],
+                                ['label' => 'Instructions', 'isSet' => $artifactInstructionExists, 'value' => basename($config['artifact_instructions'])],
+                                ['label' => 'Deploy Dir',   'isSet' => ! empty($config['artifact_deploy_dir'])],
+                                ['label' => 'GitLab URL',   'isSet' => ! empty($config['gitlab_base_url'])],
+                            ];
+                            foreach ($artifactVars as $av): ?>
+                                <div class="flex flex-row items-center justify-between gap-4">
+                                    <span class="text-slate-400 dark:text-slate-500 uppercase truncate"><?= $av['label'] ?></span>
+                                    <div class="flex items-center gap-1 shrink-0">
+                                        <?php if (isset($av['value'])): ?>
+                                            <span class="text-slate-400 dark:text-slate-600 text-[10px] truncate max-w-[80px]"><?= htmlspecialchars($av['value']) ?></span>
+                                        <?php endif; ?>
+                                        <span class="px-2 py-0.5 rounded font-bold <?= $av['isSet']
+                                            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-500'
+                                            : 'bg-rose-500/10 text-rose-600 dark:text-rose-500' ?>">
+                                            <?= $av['isSet'] ? '0K' : '??' ?>
+                                        </span>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                            <?php if (! $artifactInstructionExists): ?>
+                                <p class="text-rose-500 dark:text-rose-400 text-[10px] pt-1 break-all">
+                                    Not found: <?= htmlspecialchars($config['artifact_instructions']) ?>
+                                </p>
+                            <?php endif; ?>
                         </div>
                     </div>
 
