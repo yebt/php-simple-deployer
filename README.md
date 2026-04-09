@@ -200,10 +200,11 @@ GitLab CI pipeline
        ▼
 SPHPD (index.php)
    1. Validates X-Deploy-Token
-   2. Downloads artifact ZIP from GitLab API using GITLAB_TOKEN
-   3. Extracts to artifact-deploy/extracted/
-   4. Runs tasks from artifact-deploy.json (CWD = extracted dir)
-   5. Sends Telegram notification with result
+   2. Locks immediately (rejects concurrent requests from this point)
+   3. Downloads artifact ZIP from GitLab API using GITLAB_TOKEN
+   4. Extracts to artifact-deploy/extracted/
+   5. Runs tasks from artifact-deploy.json (CWD = extracted dir)
+   6. Sends Telegram notification with result
 ```
 
 ### Setup
@@ -276,6 +277,74 @@ Or use `/webhook/artifact-deploy/nowait` if you don't want the pipeline to wait 
 | `branch`     | string | `main`   | Branch name to fetch the artifact from           |
 | `job`        | string | `build`  | CI job name that produced the artifact           |
 
+### Artifact structure after extraction
+
+GitLab artifacts are ZIP files. After extraction, the contents are placed in `ARTIFACT_DEPLOY_DIR/extracted/`. The structure mirrors what you defined in your CI `artifacts.paths`:
+
+```yaml
+# .gitlab-ci.yml example
+build:
+  script: npm run build
+  artifacts:
+    paths:
+      - dist/
+      - package.json
+```
+
+After extraction, the `extracted/` directory will contain:
+
+```
+artifact-deploy/extracted/
+├── dist/
+│   ├── index.html
+│   └── assets/
+└── package.json
+```
+
+All commands in `artifact-deploy.json` run with `extracted/` as the current working directory, so you can reference `dist/`, `package.json`, etc. directly.
+
+### Handling nested archives within instructions
+
+If your artifact contains a tarball or nested archive (e.g. `release.tar.gz`), you can extract it inside an instruction task:
+
+```json
+[
+  {
+    "name": "Extract inner archive",
+    "run": [
+      "tar -xzf release.tar.gz",
+      "ls -la"
+    ]
+  },
+  {
+    "name": "Deploy",
+    "run": "rsync -av --delete app/ /var/www/html/"
+  }
+]
+```
+
+Since all tasks share the same shell session, environment variables and directory changes (`cd`) carry over between commands within the same task.
+
+### Concurrent execution protection
+
+Only one artifact deployment can run at a time. The lock is acquired **before** the download starts, not just before task execution. This means:
+
+- A second webhook call received while downloading → `409 Conflict`
+- A second webhook call received while extracting → `409 Conflict`
+- A second webhook call received while tasks are running → `409 Conflict`
+
+The lock is automatically released when the deployment finishes (success or failure).
+
+### Stopping a running deployment
+
+An in-progress artifact deployment can be interrupted from the live status view (`/status/live`) using the **STOP DEPLOYMENT** button. This sends `POST /deploy/stop`, which:
+
+1. Sends `SIGTERM` (then `SIGKILL` if needed) to the tracked process PID — this stops the active phase, whether it is still downloading, extracting, or executing tasks.
+2. Kills any active child shell process (`stdbuf -o0 -e0 bash`).
+3. Marks the deployment as finished in the status file.
+
+After stopping, the partial log file (including what was downloaded/extracted so far) remains in `LOGS_PATH` for review.
+
 ### Artifact format support
 
 | Format | Method                                        |
@@ -286,9 +355,32 @@ Or use `/webhook/artifact-deploy/nowait` if you don't want the pipeline to wait 
 
 > GitLab artifacts are always ZIP files. RAR and `7z` fallback support is available for custom artifact sources.
 
-### Logs
+### Debugging artifact deployments
 
-Artifact deployments produce the same four log files as standard deployments, using the prefix `artifact_deploy_YYYYMMDD_HHmmss` instead of `deploy_`. They are visible in the `/alllogs` browser.
+Each artifact deployment produces the same four log files as standard deployments, using the prefix `artifact_deploy_YYYYMMDD_HHmmss`. They are visible in the `/alllogs` browser.
+
+The `.fraw` file is especially useful for debugging because it is written **line by line from the very start** — including the download and extraction phases, before any task begins:
+
+```
+START: 2024-01-01 12:00:00
+[PRE][info] Downloading artifact — project: 42 | branch: main | job: build
+[PRE][info] URL: https://gitlab.com/api/v4/projects/42/jobs/artifacts/main/download?job=build
+[PRE][info] Artifact downloaded successfully — 1234.5 KB (HTTP 200)
+[PRE][info] Extracting artifact to: /srv/deployer/artifact-deploy/extracted
+[PRE][info] Artifact extracted successfully
+[PRE][info] Instructions validated — 3 task(s) queued
+[PRE][info] Starting task execution in: /srv/deployer/artifact-deploy/extracted
+START TASKS: 2024-01-01 12:00:05
++---------------------------------------------+
+[TASK]: Show extracted files
+...
+```
+
+To stream the log in real time during an active deployment:
+
+```sh
+tail -f logs/artifact_deploy_20240101_120000.log.fraw
+```
 
 ---
 
