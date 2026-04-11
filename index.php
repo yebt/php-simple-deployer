@@ -328,7 +328,7 @@ function actionWebhookArtifactDeploy()
 
 function actionWebhookArtifactDeployNoWait()
 {
-    global $method;
+    global $config, $method;
     validateSecurity();
 
     if ($method !== 'POST') {
@@ -336,10 +336,9 @@ function actionWebhookArtifactDeployNoWait()
         exit('Method Not Allowed');
     }
 
-    // log arr request vars in a request log
-
-
-    $input = json_decode(file_get_contents('php://input'), true);
+    $rawInput = file_get_contents('php://input');
+    logRequestToFile($config['logs_path'].'/reqs.log', $rawInput);
+    $input = json_decode($rawInput, true);
     $projectId = $input['project_id'] ?? null;
     $branch = $input['branch'] ?? 'main';
     $job = $input['job'] ?? 'build';
@@ -508,6 +507,52 @@ function actionDeployStop()
 
 // --- LOGIC ---
 // ================================================================================
+
+function getRequestHeadersSafe()
+{
+    if (function_exists('getallheaders')) {
+        return getallheaders();
+    }
+
+    $headers = [];
+    foreach ($_SERVER as $key => $value) {
+        if (strpos($key, 'HTTP_') === 0) {
+            $name = str_replace(' ', '-', ucwords(strtolower(str_replace('_', ' ', substr($key, 5)))));
+            $headers[$name] = $value;
+        }
+    }
+
+    foreach (['CONTENT_TYPE', 'CONTENT_LENGTH', 'CONTENT_MD5', 'AUTHORIZATION'] as $key) {
+        if (isset($_SERVER[$key])) {
+            $name = str_replace(' ', '-', ucwords(strtolower(str_replace('_', ' ', $key))));
+            $headers[$name] = $_SERVER[$key];
+        }
+    }
+
+    return $headers;
+}
+
+function logRequestToFile($logFilePath, $rawBody)
+{
+    $decodedBody = json_decode($rawBody, true);
+    $entry = [
+        'timestamp' => date('c'),
+        'method' => $_SERVER['REQUEST_METHOD'] ?? 'CLI',
+        'uri' => $_SERVER['REQUEST_URI'] ?? null,
+        'remote_addr' => $_SERVER['REMOTE_ADDR'] ?? null,
+        'query_params' => $_GET,
+        'post_params' => $_POST,
+        'json_body' => json_last_error() === JSON_ERROR_NONE ? $decodedBody : null,
+        'raw_body' => $rawBody,
+        'headers' => getRequestHeadersSafe(),
+    ];
+
+    file_put_contents(
+        $logFilePath,
+        json_encode($entry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES).PHP_EOL.str_repeat('=', 80).PHP_EOL,
+        FILE_APPEND
+    );
+}
 
 function validateSecurity()
 {
