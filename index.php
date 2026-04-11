@@ -336,6 +336,9 @@ function actionWebhookArtifactDeployNoWait()
         exit('Method Not Allowed');
     }
 
+    // log arr request vars in a request log
+
+
     $input = json_decode(file_get_contents('php://input'), true);
     $projectId = $input['project_id'] ?? null;
     $branch = $input['branch'] ?? 'main';
@@ -350,20 +353,27 @@ function actionWebhookArtifactDeployNoWait()
 
     $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
     exec(
-        'php '.__FILE__.' run-artifact-deploy '
-        .escapeshellarg($host).' '
-        .escapeshellarg($projectId).' '
-        .escapeshellarg($branch).' '
+        'php '
+        .__FILE__
+        .' run-artifact-deploy '
+        .escapeshellarg($host)
+        .' '
+        .escapeshellarg($projectId)
+        .' '
+        .escapeshellarg($branch)
+        .' '
         .escapeshellarg($job)
         .' > /dev/null 2>&1 &',
     );
 
     http_response_code(202);
     header('Content-Type: application/json');
-    echo json_encode([
-        'status' => 'accepted',
-        'message' => 'Artifact deployment initiated in background',
-    ]);
+    echo
+        json_encode([
+            'status' => 'accepted',
+            'message' => 'Artifact deployment initiated in background',
+        ])
+    ;
 }
 
 function actionLogView()
@@ -431,7 +441,7 @@ function actionNotifyTest()
 
     // @mago-format-ignore-next
     $res = sendTelegram(
-    <<<MARKDOWN
+        <<<MARKDOWN
 🧪 *System Check: SPHPD*
 
 *Host:* `$server`
@@ -440,7 +450,7 @@ function actionNotifyTest()
 
 [Ver Dashboard]($dashboardUrl)
 MARKDOWN
-);
+    );
     header('Location: /health?notified='.($res ? '1' : '0'));
 }
 
@@ -824,39 +834,46 @@ function executeArtifactDeployment(?string $projectId, string $branch = 'main', 
     $logFilePathFRaw = $config['logs_path'].'/'.$logFileName.'.fraw';
 
     $startTime = microtime(true);
-    $host = defined('CLI_HOST') ? CLI_HOST : ($_SERVER['HTTP_HOST'] ?? 'localhost');
+    $host = defined('CLI_HOST') ? CLI_HOST : $_SERVER['HTTP_HOST'] ?? 'localhost';
 
     // Lock the status file IMMEDIATELY to prevent race conditions during download/extract.
     // Any concurrent request will see this and get a 409 before the download even starts.
     file_put_contents($statusFile, json_encode([
-        'running'  => true,
+        'running' => true,
         'finished' => false,
-        'task'     => 'Downloading artifact...',
-        'index'    => 0,
-        'total'    => 0,
-        'pid'      => getmypid(),
+        'task' => 'Downloading artifact...',
+        'index' => 0,
+        'total' => 0,
+        'pid' => getmypid(),
         'log_file' => $logFileName,
-        'start'    => $startTime,
+        'start' => $startTime,
     ]));
 
     // Initialize fraw log for pre-run phases (download, extract)
-    $preLog    = 'START: '.date('Y-m-d H:i:s')."\n";
+    $preLog = 'START: '.date('Y-m-d H:i:s')."\n";
     $preLogRaw = 'START: '.date('Y-m-d H:i:s')."\n";
     file_put_contents($logFilePathFRaw, $preLog);
 
     // Helper: write a line to all pre-run logs
     $logLine = function (string $line, string $level = 'info') use (&$preLog, &$preLogRaw, $logFilePathFRaw) {
         $ts = date('Y-m-d H:i:s');
-        $preLog    .= "[PRE][$level] $line\n";
+        $preLog .= "[PRE][$level] $line\n";
         $preLogRaw .= "[$ts][$level] $line\n";
         file_put_contents($logFilePathFRaw, "[PRE][$level] $line\n", FILE_APPEND);
     };
 
     // Helper: fail during pre-run phase — writes logs, updates status, notifies, exits
     $failArtifact = function (string $msg, string $task = '') use (
-        &$preLog, &$preLogRaw,
-        $logFilePath, $logFilePathRaw, $logFilePathHTML, $logFilePathFRaw,
-        $statusFile, $host, $startTime, $logFileName
+        &$preLog,
+        &$preLogRaw,
+        $logFilePath,
+        $logFilePathRaw,
+        $logFilePathHTML,
+        $logFilePathFRaw,
+        $statusFile,
+        $host,
+        $startTime,
+        $logFileName,
     ) {
         $duration = round(microtime(true) - $startTime, 2);
         $protocol = isset($_SERVER['HTTPS']) ? 'https://' : 'http://';
@@ -869,13 +886,16 @@ function executeArtifactDeployment(?string $projectId, string $branch = 'main', 
         file_put_contents($logFilePathHTML, createLogHtml(
             'Artifact Deploy Log',
             '<h1>Artifact Deploy Log</h1><p style="color:red;font-weight:bold;">ERROR: '
-                .htmlspecialchars($msg).'</p><p>Duration: '.$duration.'s</p>',
+            .htmlspecialchars($msg)
+            .'</p><p>Duration: '
+            .$duration
+            .'s</p>',
         ));
         file_put_contents($statusFile, json_encode([
-            'running'  => false,
+            'running' => false,
             'finished' => true,
-            'success'  => false,
-            'task'     => "FAILED: $msg",
+            'success' => false,
+            'task' => "FAILED: $msg",
             'duration' => $duration,
             'log_file' => $logFileName,
         ]));
@@ -943,14 +963,14 @@ function executeArtifactDeployment(?string $projectId, string $branch = 'main', 
 
     // Update status: extracting
     file_put_contents($statusFile, json_encode([
-        'running'  => true,
+        'running' => true,
         'finished' => false,
-        'task'     => 'Extracting artifact...',
-        'index'    => 0,
-        'total'    => 0,
-        'pid'      => getmypid(),
+        'task' => 'Extracting artifact...',
+        'index' => 0,
+        'total' => 0,
+        'pid' => getmypid(),
         'log_file' => $logFileName,
-        'start'    => $startTime,
+        'start' => $startTime,
     ]));
 
     // Extract artifact
@@ -967,7 +987,7 @@ function executeArtifactDeployment(?string $projectId, string $branch = 'main', 
         $failArtifact('Failed to extract artifact', 'Extract');
     }
 
-    $logLine("Artifact extracted successfully");
+    $logLine('Artifact extracted successfully');
 
     // Validate and load instructions
     $jsonContent = file_get_contents($instructionsFile);
@@ -985,12 +1005,21 @@ function executeArtifactDeployment(?string $projectId, string $branch = 'main', 
         $failArtifact($msg);
     }
 
-    $logLine("Instructions validated — ".count($tasks)." task(s) queued");
+    $logLine('Instructions validated — '.count($tasks).' task(s) queued');
     $logLine("Starting task execution in: $extractDir");
 
     // Run tasks using the extracted directory as CWD.
     // Pass pre-run log content so it is included in the final .log and .rlog files.
-    runTasks($logFilePath, $logFilePathRaw, $logFilePathHTML, $logFilePathFRaw, $tasks, $extractDir, $preLog, $preLogRaw);
+    runTasks(
+        $logFilePath,
+        $logFilePathRaw,
+        $logFilePathHTML,
+        $logFilePathFRaw,
+        $tasks,
+        $extractDir,
+        $preLog,
+        $preLogRaw,
+    );
 }
 
 function extractArtifact(string $file, string $destDir): bool
@@ -999,7 +1028,7 @@ function extractArtifact(string $file, string $destDir): bool
 
     // ZIP: use PHP's built-in ZipArchive
     if ($ext === 'zip') {
-        $zip = new ZipArchive();
+        $zip = new ZipArchive;
         if ($zip->open($file) === true) {
             $zip->extractTo($destDir);
             $zip->close();
@@ -1489,12 +1518,14 @@ function renderValidationError($errorMessage)
 { ?>
     <!DOCTYPE html>
     <html lang="en">
+
     <head>
         <meta charset="UTF-8">
         <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
         <title>Deployment Configuration Error</title>
         <?= renderHeadImports() ?>
     </head>
+
     <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-300 p-8 font-mono text-sm transition-colors duration-200">
         <div class="max-w-2xl mx-auto">
             <div class="mt-8 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-500/50 p-8 rounded-lg shadow-lg dark:shadow-xl">
@@ -1541,8 +1572,9 @@ function renderValidationError($errorMessage)
             </div>
         </div>
     </body>
+
     </html>
-    <?php }
+<?php }
 
 function showLastLog()
 {
@@ -1608,22 +1640,20 @@ function runTasksWithShell($tasks, &$fullLog, &$fullLogRaw, &$taskStatus)
 
     $process = proc_open('/bin/bash -s', $descriptors, $pipes);
 
-    if (!is_resource($process)) {
-        throw new RuntimeException("Unable to start shell");
+    if (! is_resource($process)) {
+        throw new RuntimeException('Unable to start shell');
     }
 
-
     foreach ($tasks as $index => $task) {
-
         $name = $task['name'] ?? 'Unnamed Task';
-        $cmd  = $task['run'];
+        $cmd = $task['run'];
 
         $taskStatus[$index]['status'] = 'running';
 
         $fullLog .= "\n[TASK]: $name\n[CMD]: $cmd\n";
-        $fullLogRaw .= "[" . date('Y-m-d H:i:s') . "] $cmd\n";
+        $fullLogRaw .= '['.date('Y-m-d H:i:s')."] $cmd\n";
 
-        fwrite($pipes[0], $cmd . "\n");
+        fwrite($pipes[0], $cmd."\n");
         fwrite($pipes[0], "echo __EXIT_CODE:$?\n");
 
         fflush($pipes[0]);
@@ -1633,22 +1663,22 @@ function runTasksWithShell($tasks, &$fullLog, &$fullLogRaw, &$taskStatus)
         $exitCode = 1;
 
         while (true) {
-
             $line = fgets($pipes[1]);
 
-            if ($line === false) break;
+            if ($line === false)
+                break;
 
-            if (str_starts_with($line, "__EXIT_CODE:")) {
-                $exitCode = (int) trim(str_replace("__EXIT_CODE:", "", $line));
+            if (str_starts_with($line, '__EXIT_CODE:')) {
+                $exitCode = (int) trim(str_replace('__EXIT_CODE:', '', $line));
                 break;
             }
 
             $stdout .= $line;
         }
 
-        echo "DONE";
+        echo 'DONE';
         $stderr .= stream_get_contents($pipes[2]);
-        echo "<br>";
+        echo '<br>';
 
         $fullLog .= "STDOUT: $stdout\nSTDERR: $stderr\nEXIT: $exitCode\n";
         $fullLogRaw .= $stdout;
@@ -1657,10 +1687,11 @@ function runTasksWithShell($tasks, &$fullLog, &$fullLogRaw, &$taskStatus)
             $taskStatus[$index]['status'] = 'success';
         } else {
             $taskStatus[$index]['status'] = 'failed';
+
             // return [$exitCode, $name, $stderr ?: $stdout];
             return [$exitCode, $name ?? '', $stderr ?: $stdout, $index ?? 0];
         }
-        echo "====";
+        echo '====';
     }
 
     fclose($pipes[0]);
@@ -1714,11 +1745,12 @@ function renderHealthView()
     ?>
     <!DOCTYPE html>
     <html lang="en">
+
     <head>
         <meta charset="UTF-8">
         <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
         <title>System Health - Deployer</title>
-        <?= renderHeadImports() ?>      
+        <?= renderHeadImports() ?>
         <script>
             <?php if ($isActuallyRunning): ?>
                 const checkStatus = setInterval(async () => {
@@ -1737,14 +1769,15 @@ function renderHealthView()
             <?php endif; ?>
         </script>
     </head>
+
     <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-300 p-8 font-mono text-sm transition-colors duration-200">
         <div class="max-w-6xl mx-auto">
             <div class="flex justify-between items-start mb-10">
                 <div>
                     <h1 class="text-slate-900 dark:text-white font-bold text-xl tracking-tighter uppercase">SIMPLE PHP <span class="text-[#a855f7]">DEPLOYER</span></h1>
                     <p class="text-slate-400 dark:text-slate-500">
-                        Host: <span class="text-slate-600 dark:text-slate-400"><?= $serverDomain ?></span> | 
-                        IP: <span class="text-slate-600 dark:text-slate-400"><?= $serverIp ?></span> | 
+                        Host: <span class="text-slate-600 dark:text-slate-400"><?= $serverDomain ?></span> |
+                        IP: <span class="text-slate-600 dark:text-slate-400"><?= $serverIp ?></span> |
                         PHP: <span class="text-slate-600 dark:text-slate-400"><?= $phpVersion ?></span>
                     </p>
                 </div>
@@ -1805,19 +1838,28 @@ function renderHealthView()
                         <h2 class="text-slate-400 dark:text-slate-500 font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">Artifact Config</h2>
                         <div class="space-y-3 text-[11px]">
                             <?php
+
                             $artifactVars = [
                                 ['label' => 'GitLab Token', 'isSet' => ! empty($config['gitlab_token'])],
-                                ['label' => 'Instructions', 'isSet' => $artifactInstructionExists, 'value' => basename($config['artifact_instructions'])],
-                                ['label' => 'Deploy Dir',   'isSet' => ! empty($config['artifact_deploy_dir'])],
-                                ['label' => 'GitLab URL',   'isSet' => ! empty($config['gitlab_base_url'])],
+                                [
+                                    'label' => 'Instructions',
+                                    'isSet' => $artifactInstructionExists,
+                                    'value' => basename($config['artifact_instructions']),
+                                ],
+                                ['label' => 'Deploy Dir', 'isSet' => ! empty($config['artifact_deploy_dir'])],
+                                ['label' => 'GitLab URL', 'isSet' => ! empty($config['gitlab_base_url'])],
                             ];
                             foreach ($artifactVars as $av): ?>
                                 <div class="flex flex-row items-center justify-between gap-4">
-                                    <span class="text-slate-400 dark:text-slate-500 uppercase truncate"><?= $av['label'] ?></span>
-                                    <div class="flex items-center gap-1 shrink-0">
+                                    <div class="text-slate-400 dark:text-slate-500 uppercase truncate"><?= $av['label'] ?>
+
                                         <?php if (isset($av['value'])): ?>
-                                            <span class="text-slate-400 dark:text-slate-600 text-[10px] truncate max-w-[80px]"><?= htmlspecialchars($av['value']) ?></span>
+                                            <span class="text-slate-400 dark:text-slate-600 text-[10px] truncate max-w-[80px] lowercase"><?= htmlspecialchars(
+                                                $av['value'],
+                                            ) ?></span>
                                         <?php endif; ?>
+                                    </div>
+                                    <div class="flex items-center gap-1 shrink-0">
                                         <span class="px-2 py-0.5 rounded font-bold <?= $av['isSet']
                                             ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-500'
                                             : 'bg-rose-500/10 text-rose-600 dark:text-rose-500' ?>">
@@ -1844,14 +1886,14 @@ function renderHealthView()
                                     Running...
                                 </button>
                             <?php else: ?>
-                                <a href="/webhook/deploy?manual=1" 
+                                <a href="/webhook/deploy?manual=1"
                                     onclick="return confirm('Start deployment?')"
                                     class="block w-full text-center bg-slate-800 dark:bg-slate-800 text-white py-2 rounded text-xs font-bold hover:bg-slate-700 dark:hover:bg-slate-700 transition">MANUAL DEPLOY</a>
 
                             <?php endif; ?>
 
                             <?php if (env('MODE', 'production') !== 'production'): ?>
-                                <a href="/debugdeploy" 
+                                <a href="/debugdeploy"
                                     target="_blank"
                                     onclick="return confirm('Debug deployment?')"
                                     class="block w-full text-center bg-amber-800 dark:bg-amber-800 text-white py-2 rounded text-xs font-bold hover:bg-amber-700 dark:hover:bg-amber-700 transition">DEBUG DEPLOYMENT</a>
@@ -1915,14 +1957,16 @@ function renderHealthView()
                                     </tr>
                                 <?php endforeach;
                                 if (! $lastLogs): ?>
-                                    <tr><td colspan="3" class="p-10 text-center text-slate-400 italic">No execution history found.</td></tr>
+                                    <tr>
+                                        <td colspan="3" class="p-10 text-center text-slate-400 italic">No execution history found.</td>
+                                    </tr>
                                 <?php endif; ?>
                             </tbody>
                         </table>
                     </div>
                 </div>
             </div>
-            
+
             <div class="mt-8 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-6 rounded-lg shadow-sm dark:shadow-xl">
                 <h2 class="text-slate-400 dark:text-slate-500 text-[10px] font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">Example deploy.json</h2>
                 <pre class="text-[11px] text-indigo-700 dark:text-indigo-300 overflow-x-auto bg-slate-50 dark:bg-slate-950 p-4 rounded border border-slate-100 dark:border-transparent">
@@ -1934,8 +1978,9 @@ function renderHealthView()
             </div>
         </div>
     </body>
+
     </html>
-    <?php
+<?php
 }
 
 function renderLogsView()
@@ -1948,17 +1993,37 @@ function renderLogsView()
         $type = 'log';
 
     $typeConfig = [
-        'log'  => ['glob' => '*.log',  'url' => fn ($id) => "/log/rview/$id",    'label' => 'LOG',  'desc' => 'Formatted plain text log'],
-        'rlog' => ['glob' => '*.rlog', 'url' => fn ($id) => "/log/bview/$id",    'label' => 'RLOG', 'desc' => 'Timestamped raw log'],
-        'html' => ['glob' => '*.html', 'url' => fn ($id) => "/log/htmlview/$id", 'label' => 'HTML', 'desc' => 'Styled HTML log'],
-        'fraw' => ['glob' => '*.fraw', 'url' => fn ($id) => "/log/frawview/$id", 'label' => 'FRAW', 'desc' => 'Full raw stream with signals'],
+        'log' => [
+            'glob' => '*.log',
+            'url' => fn ($id) => "/log/rview/$id",
+            'label' => 'LOG',
+            'desc' => 'Formatted plain text log',
+        ],
+        'rlog' => [
+            'glob' => '*.rlog',
+            'url' => fn ($id) => "/log/bview/$id",
+            'label' => 'RLOG',
+            'desc' => 'Timestamped raw log',
+        ],
+        'html' => [
+            'glob' => '*.html',
+            'url' => fn ($id) => "/log/htmlview/$id",
+            'label' => 'HTML',
+            'desc' => 'Styled HTML log',
+        ],
+        'fraw' => [
+            'glob' => '*.fraw',
+            'url' => fn ($id) => "/log/frawview/$id",
+            'label' => 'FRAW',
+            'desc' => 'Full raw stream with signals',
+        ],
     ];
 
     $logs = glob($config['logs_path'].'/'.$typeConfig[$type]['glob']) ?: [];
     usort($logs, fn ($a, $b) => filemtime($b) - filemtime($a));
 
     $tabColors = [
-        'log'  => 'indigo',
+        'log' => 'indigo',
         'rlog' => 'violet',
         'html' => 'sky',
         'fraw' => 'amber',
@@ -1980,12 +2045,14 @@ function renderLogsView()
     ?>
     <!DOCTYPE html>
     <html lang="en">
+
     <head>
         <meta charset="UTF-8">
         <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
         <title>Logs — Deployer</title>
         <?= renderHeadImports() ?>
     </head>
+
     <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-300 p-8 font-mono text-sm transition-colors duration-200">
         <div class="max-w-6xl mx-auto">
 
@@ -2009,7 +2076,7 @@ function renderLogsView()
                             : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/40';
                         ?>
                         <a href="/alllogs?type=<?= $key ?>"
-                           class="px-6 py-3 text-[10px] font-bold uppercase tracking-widest transition <?= $activeClass ?>">
+                            class="px-6 py-3 text-[10px] font-bold uppercase tracking-widest transition <?= $activeClass ?>">
                             <?= $cfg['label'] ?>
                             <?php if ($active): ?>
                                 <span class="ml-1.5 text-[9px] opacity-60"><?= $cfg['desc'] ?></span>
@@ -2025,57 +2092,59 @@ function renderLogsView()
                             No <?= strtoupper($type) ?> logs found.
                         </div>
                     <?php else: ?>
-                    <table class="w-full text-left border-collapse">
-                        <thead>
-                            <tr class="bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 text-[10px] uppercase">
-                                <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800">File</th>
-                                <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800">Date</th>
-                                <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800 text-right">Size</th>
-                                <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800 text-right">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
-                            <?php foreach ($logs as $logPath):
-                                $fn = basename($logPath);
-                                $id = preg_replace('/\.log.*$/', '', $fn);
-                                $isOk = $resolveStatus($logPath);
-                                $size = filesize($logPath);
-                                $sizeLabel = $size < 1024
-                                    ? $size.' B'
-                                    : ($size < 1048576
-                                        ? round($size / 1024, 1).' KB'
-                                        : round($size / 1048576, 2).' MB');
-                                $viewUrl = ($typeConfig[$type]['url'])($id);
-                                ?>
-                                <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition">
-                                    <td class="px-6 py-4 text-xs">
-                                        <?php if ($isOk === true): ?>
-                                            <span class="mr-2 text-emerald-500">●</span>
-                                        <?php elseif ($isOk === false): ?>
-                                            <span class="mr-2 text-rose-500">●</span>
-                                        <?php else: ?>
-                                            <span class="mr-2 text-slate-300 dark:text-slate-700">●</span>
-                                        <?php endif; ?>
-                                        <?= htmlspecialchars($fn) ?>
-                                    </td>
-                                    <td class="px-6 py-4 text-slate-400 dark:text-slate-600 text-xs">
-                                        <?= date('Y-m-d H:i:s', filemtime($logPath)) ?>
-                                    </td>
-                                    <td class="px-6 py-4 text-slate-400 dark:text-slate-600 text-xs text-right tabular-nums">
-                                        <?= $sizeLabel ?>
-                                    </td>
-                                    <td class="px-6 py-4 text-right">
-                                        <a target="_blank" href="<?= $viewUrl ?>"
-                                           class="inline-block px-3 py-1 rounded text-[10px] font-bold uppercase tracking-wide
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 text-[10px] uppercase">
+                                    <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800">File</th>
+                                    <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800">Date</th>
+                                    <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800 text-right">Size</th>
+                                    <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                                <?php foreach ($logs as $logPath):
+                                    $fn = basename($logPath);
+                                    $id = preg_replace('/\.log.*$/', '', $fn);
+                                    $isOk = $resolveStatus($logPath);
+                                    $size = filesize($logPath);
+                                    $sizeLabel = $size < 1024
+                                        ? $size.' B'
+                                        : (
+                                            $size < 1048576
+                                                ? round($size / 1024, 1).' KB'
+                                                : round($size / 1048576, 2).' MB'
+                                        );
+                                    $viewUrl = $typeConfig[$type]['url']($id);
+                                    ?>
+                                    <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition">
+                                        <td class="px-6 py-4 text-xs">
+                                            <?php if ($isOk === true): ?>
+                                                <span class="mr-2 text-emerald-500">●</span>
+                                            <?php elseif ($isOk === false): ?>
+                                                <span class="mr-2 text-rose-500">●</span>
+                                            <?php else: ?>
+                                                <span class="mr-2 text-slate-300 dark:text-slate-700">●</span>
+                                            <?php endif; ?>
+                                            <?= htmlspecialchars($fn) ?>
+                                        </td>
+                                        <td class="px-6 py-4 text-slate-400 dark:text-slate-600 text-xs">
+                                            <?= date('Y-m-d H:i:s', filemtime($logPath)) ?>
+                                        </td>
+                                        <td class="px-6 py-4 text-slate-400 dark:text-slate-600 text-xs text-right tabular-nums">
+                                            <?= $sizeLabel ?>
+                                        </td>
+                                        <td class="px-6 py-4 text-right">
+                                            <a target="_blank" href="<?= $viewUrl ?>"
+                                                class="inline-block px-3 py-1 rounded text-[10px] font-bold uppercase tracking-wide
                                                   bg-<?= $tabColors[$type] ?>-500/10 text-<?= $tabColors[$type] ?>-600 dark:text-<?= $tabColors[$type] ?>-400
                                                   hover:bg-<?= $tabColors[$type] ?>-500/20 transition">
-                                            OPEN
-                                        </a>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
+                                                OPEN
+                                            </a>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
                     <?php endif; ?>
                 </div>
 
@@ -2088,8 +2157,9 @@ function renderLogsView()
 
         </div>
     </body>
+
     </html>
-    <?php
+<?php
 }
 
 function renderLiveStatus()
@@ -2103,6 +2173,7 @@ function renderLiveStatus()
     ?>
     <!DOCTYPE html>
     <html lang="en">
+
     <head>
         <meta charset="UTF-8">
         <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
@@ -2113,11 +2184,11 @@ function renderLiveStatus()
                 try {
                     const response = await fetch('/status/data');
                     const data = await response.json();
-                    
+
                     // Update task name and progress
                     document.getElementById('current-task').textContent = data.task;
                     document.getElementById('progress-text').textContent = `${data.index}/${data.total}`;
-                    
+
                     // Update progress bar
                     const progressPercent = data.running || data.finished ? (data.index / data.total) * 100 : ((data.index - 1) / data.total) * 100;
                     document.getElementById('progress-bar').style.width = progressPercent + '%';
@@ -2150,7 +2221,7 @@ function renderLiveStatus()
                         let rowClass = 'border-transparent';
                         let bounce = '';
 
-                        switch(status) {
+                        switch (status) {
                             case 'success':
                                 badgeClass = 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20';
                                 label = 'DONE';
@@ -2224,12 +2295,12 @@ function renderLiveStatus()
                         resultContainer.classList.remove('hidden');
                         resultContainer.className = `mb-6 p-4 rounded-lg border ${data.success ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500' : 'bg-rose-500/10 border-rose-500/20 text-rose-500'} flex justify-between items-center uppercase text-[10px] font-bold tracking-widest`;
                         resultContainer.innerHTML = `<span>${data.success ? '✓ Deployment Completed' : '✕ Deployment Failed'}</span><span>Duration: ${data.duration}s</span>`;
-                        
+
                         document.getElementById('action-buttons').innerHTML = `
                             <a href="/health" class="bg-slate-800 text-white px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-700 transition">BACK TO DASHBOARD</a>
                             <a href="/log/view?file=${encodeURIComponent(data.log_file)}" class="border border-slate-200 dark:border-slate-800 px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition">VIEW FULL LOG</a>
                         `;
-                        
+
                         // Stop polling if finished
                         clearInterval(pollInterval);
                     }
@@ -2243,11 +2314,13 @@ function renderLiveStatus()
                 if (!confirm('Are you sure you want to stop the deployment?')) {
                     return;
                 }
-                
+
                 try {
-                    const response = await fetch('/deploy/stop', { method: 'POST' });
+                    const response = await fetch('/deploy/stop', {
+                        method: 'POST'
+                    });
                     const data = await response.json();
-                    
+
                     if (data.success) {
                         alert('Deployment stopped successfully');
                         updateStatus();
@@ -2267,9 +2340,10 @@ function renderLiveStatus()
             window.onload = updateStatus;
         </script>
     </head>
+
     <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-400 min-h-screen font-mono p-6 transition-colors duration-200">
         <div class="w-full max-w-6xl mx-auto">
-            
+
             <!-- Header Section -->
             <div class="mb-8 flex justify-between items-end border-b border-slate-200 dark:border-slate-700 pb-6">
                 <div>
@@ -2292,7 +2366,7 @@ function renderLiveStatus()
 
             <!-- Two-Column Layout: Task List + Real-time Output -->
             <div class="grid grid-cols-2 gap-6 mb-8">
-                
+
                 <!-- Left Column: Task List with Expandable Outputs -->
                 <div class="flex flex-col">
                     <div class="text-[10px] text-slate-400 dark:text-slate-500 mb-3 uppercase tracking-[0.2em] font-bold">Task Execution Timeline</div>
@@ -2330,6 +2404,7 @@ function renderLiveStatus()
 
         </div>
     </body>
+
     </html>
-    <?php
+<?php
 }
