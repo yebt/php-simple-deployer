@@ -130,9 +130,9 @@ if (isset($argv[1]) && $argv[1] === 'run-artifact-deploy') {
     define('CLI_HOST', $argv[2] ?? 'localhost');
     executeArtifactDeployment(
         $argv[3] ?? null,
-        $argv[4] ?? 'main',
         $argv[5] ?? 'build',
         $argv[6] ?? null,
+        $argv[4] ?? 'main',
     );
     exit();
 }
@@ -331,9 +331,9 @@ function actionWebhookArtifactDeploy()
 
     executeArtifactDeployment(
         $dataArtifact->project_id,
-        $dataArtifact->branch,
         $dataArtifact->job,
         $dataArtifact->job_id,
+        $dataArtifact->branch,
     );
 }
 
@@ -892,7 +892,7 @@ function executeDeploymentWithSingleShellProccess()
     runTasks($logFilePath, $logFilePathRaw, $logFIlePathHTML, $logFilePathFRaw, $tasks);
 }
 
-function executeArtifactDeployment(?string $projectId, string $branch = 'main', string $job, string $job_id)
+function executeArtifactDeployment(?string $projectId, string $job, string $job_id, string $branch = 'main')
 {
     global $config, $statusFile;
 
