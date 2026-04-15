@@ -196,6 +196,7 @@ $router->add('/status/check', 'actionStatusCheck');
 $router->add('/status/data', 'actionStatusData');
 $router->add('/', 'actionHome');
 $router->add('/health', 'actionHealthView');
+$router->add('/health1', 'actionHealth1View');
 $router->add('/health2', 'actionHealth2View');
 
 if (env('MODE', 'production') !== 'production') {
@@ -270,6 +271,11 @@ function actionHome()
 function actionHealthView()
 {
     renderHealthView();
+}
+
+function actionHealth1View()
+{
+    renderHealth1View();
 }
 
 function actionHealth2View()
