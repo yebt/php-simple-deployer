@@ -15,6 +15,19 @@ function dump_highlight($variable)
     highlight_string($output);
 }
 
+// CLASS
+// ================================================================================
+
+class ArifactContract
+{
+    public function __construct(
+        public readonly string  $project_id,
+        public readonly string $branch,
+        public readonly string $job,
+        public readonly string $job_id,
+    ){}
+}
+
 // INITS
 // ================================================================================
 
@@ -115,7 +128,12 @@ if (isset($argv[1]) && $argv[1] === 'run-deploy') {
 // Execute artifact deployment if called from CLI
 if (isset($argv[1]) && $argv[1] === 'run-artifact-deploy') {
     define('CLI_HOST', $argv[2] ?? 'localhost');
-    executeArtifactDeployment($argv[3] ?? null, $argv[4] ?? 'main', $argv[5] ?? 'build');
+    executeArtifactDeployment(
+        $argv[3] ?? null,
+        $argv[4] ?? 'main',
+        $argv[5] ?? 'build',
+        $argv[6] ?? null,
+    );
     exit();
 }
 
@@ -154,6 +172,9 @@ class RegExpRouter
         return call_user_func($notFoundCallback);
     }
 }
+
+// ROUTES
+// ================================================================================
 
 $router = new RegExpRouter;
 
@@ -195,7 +216,7 @@ $router->add('404', function () {
     echo '404 Route Not Found';
 });
 
-// 2. Router
+// 2. Router init
 $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $method = $_SERVER['REQUEST_METHOD'];
 
@@ -301,29 +322,19 @@ function actionWebhookDeployNoWait()
     ;
 }
 
+// ---------------------------
 function actionWebhookArtifactDeploy()
 {
-    global $method;
-    validateSecurity();
+    global $method, $config;
 
-    if ($method !== 'POST') {
-        http_response_code(405);
-        exit('Method Not Allowed');
-    }
+    $dataArtifact = checkArtifact($method, $config);
 
-    $input = json_decode(file_get_contents('php://input'), true);
-    $projectId = $input['project_id'] ?? null;
-    $branch = $input['branch'] ?? 'main';
-    $job = $input['job'] ?? 'build';
-
-    if (! $projectId) {
-        http_response_code(400);
-        header('Content-Type: application/json');
-        echo json_encode(['error' => 'Missing project_id']);
-        exit();
-    }
-
-    executeArtifactDeployment($projectId, $branch, $job);
+    executeArtifactDeployment(
+        $dataArtifact->project_id,
+        $dataArtifact->branch,
+        $dataArtifact->job,
+        $dataArtifact->job_id,
+    );
 }
 
 function actionWebhookArtifactDeployNoWait()
@@ -331,24 +342,7 @@ function actionWebhookArtifactDeployNoWait()
     global $config, $method;
     validateSecurity();
 
-    if ($method !== 'POST') {
-        http_response_code(405);
-        exit('Method Not Allowed');
-    }
-
-    $rawInput = file_get_contents('php://input');
-    logRequestToFile($config['logs_path'].'/reqs.log', $rawInput);
-    $input = json_decode($rawInput, true);
-    $projectId = $input['project_id'] ?? null;
-    $branch = $input['branch'] ?? 'main';
-    $job = $input['job'] ?? 'build';
-
-    if (! $projectId) {
-        http_response_code(400);
-        header('Content-Type: application/json');
-        echo json_encode(['error' => 'Missing project_id']);
-        exit();
-    }
+    $dataArtiact = checkArtifact($method, $config);
 
     $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
     exec(
@@ -357,11 +351,13 @@ function actionWebhookArtifactDeployNoWait()
         .' run-artifact-deploy '
         .escapeshellarg($host)
         .' '
-        .escapeshellarg($projectId)
+        .escapeshellarg($dataArtiact->project_id)
         .' '
-        .escapeshellarg($branch)
+        .escapeshellarg($dataArtiact->branch)
         .' '
-        .escapeshellarg($job)
+        .escapeshellarg($dataArtiact->job)
+        .' '
+        .escapeshellarg($dataArtiact->job_id)
         .' > /dev/null 2>&1 &',
     );
 
@@ -504,6 +500,53 @@ function actionDeployStop()
     echo json_encode(['success' => true, 'message' => 'Deployment stopped']);
     exit();
 }
+
+
+// Aux functions
+// ================================================================================
+
+/**
+ * Checks the incoming artifact deployment request, validates it, logs it, and returns a structured contract object.
+ * @param string $method 
+ * @param mixed $config 
+ * @return ArifactContract 
+ */
+function checkArtifact(string $method, $config): ArifactContract
+{
+    validateSecurity();
+    // Allow just post method
+    if ($method !== 'POST'){
+        http_response_code(405);
+        exit('Method Not Allowed');
+    }
+
+    // Log requests
+    $rawInput = file_get_contents('php://input');
+    logRequestToFile($config['logs_path'].'/reqs.log', $rawInput);
+
+    // validate
+    $input = json_decode($rawInput, true);
+    $projectId = $input['project_id'] ?? null;
+    $branch = $input['branch'] ?? 'main';
+    $job = $input['job'] ?? 'some';
+    $job_id = $input['job_id'] ?? null;
+
+    // no null some of the vars
+    if ( ! $projectId || ! $job_id) {
+        http_response_code(400);
+        header('Content-Type: application/json');
+        echo json_encode(['error' => 'Missing required fields: project_id and job_id']);
+        exit();
+    }
+
+    return new ArifactContract(
+        project_id: $projectId,
+        branch: $branch,
+        job: $job,
+        job_id: $job_id,
+    );
+}
+
 
 // --- LOGIC ---
 // ================================================================================
@@ -851,13 +894,13 @@ function executeDeploymentWithSingleShellProccess()
     runTasks($logFilePath, $logFilePathRaw, $logFIlePathHTML, $logFilePathFRaw, $tasks);
 }
 
-function executeArtifactDeployment(?string $projectId, string $branch = 'main', string $job = 'build')
+function executeArtifactDeployment(?string $projectId, string $branch = 'main', string $job, string $job_id)
 {
     global $config, $statusFile;
 
-    if (empty($projectId)) {
+    if (empty($projectId) || empty($job_id)) {
         http_response_code(400);
-        exit('Missing project_id');
+        exit('Missing params');
     }
 
     // Check for concurrent deployment
@@ -994,7 +1037,8 @@ function executeArtifactDeployment(?string $projectId, string $branch = 'main', 
     $result = curl_exec($ch);
     $curlError = curl_error($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    // DEPRECATED:
+    // curl_close($ch); 
     fclose($fp);
 
     if ($result === false) {
@@ -1559,68 +1603,6 @@ function showSpecificLog($file, $type = 'text/plain')
         exit('Access Denied');
 }
 
-function renderValidationError($errorMessage)
-{ ?>
-    <!DOCTYPE html>
-    <html lang="en">
-
-    <head>
-        <meta charset="UTF-8">
-        <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
-        <title>Deployment Configuration Error</title>
-        <?= renderHeadImports() ?>
-    </head>
-
-    <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-300 p-8 font-mono text-sm transition-colors duration-200">
-        <div class="max-w-2xl mx-auto">
-            <div class="mt-8 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-500/50 p-8 rounded-lg shadow-lg dark:shadow-xl">
-                <div class="flex items-start gap-4">
-                    <div class="text-4xl">❌</div>
-                    <div class="flex-1">
-                        <h1 class="text-xl font-bold text-rose-900 dark:text-rose-100 mb-4">Deployment Configuration Error</h1>
-                        <p class="text-rose-800 dark:text-rose-200 mb-6 leading-relaxed">
-                            <?= htmlspecialchars($errorMessage, ENT_QUOTES, 'UTF-8') ?>
-                        </p>
-                        <div class="flex gap-3">
-                            <a href="/health" class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded text-sm font-bold transition">
-                                Back to Dashboard
-                            </a>
-                            <button onclick="window.history.back()" class="border border-rose-300 dark:border-rose-500/50 hover:bg-rose-50 dark:hover:bg-rose-900/30 text-rose-700 dark:text-rose-200 px-4 py-2 rounded text-sm font-bold transition">
-                                Go Back
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="mt-8 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-6 rounded-lg shadow-sm dark:shadow-xl">
-                <h2 class="text-slate-400 dark:text-slate-500 text-[10px] font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">Common Issues & Solutions</h2>
-                <div class="space-y-4 text-sm">
-                    <div>
-                        <h3 class="font-bold text-slate-700 dark:text-slate-300 mb-2">Missing YQ_PATH Variable</h3>
-                        <p class="text-slate-600 dark:text-slate-400 mb-2">If using a YAML file (deploy.yml), you need to set the YQ_PATH environment variable:</p>
-                        <pre class="bg-slate-50 dark:bg-slate-950 p-3 rounded text-xs border border-slate-200 dark:border-slate-800">YQ_PATH=/usr/bin/yq</pre>
-                    </div>
-                    <div>
-                        <h3 class="font-bold text-slate-700 dark:text-slate-300 mb-2">Invalid Instructions Format</h3>
-                        <p class="text-slate-600 dark:text-slate-400 mb-2">Check your deploy.json or deploy.yml file format:</p>
-                        <pre class="bg-slate-50 dark:bg-slate-950 p-3 rounded text-xs border border-slate-200 dark:border-slate-800">[
-  { "name": "Task 1", "run": "command" },
-  { "name": "Task 2", "run": "command" }
-]</pre>
-                    </div>
-                    <div>
-                        <h3 class="font-bold text-slate-700 dark:text-slate-300 mb-2">Missing Configuration</h3>
-                        <p class="text-slate-600 dark:text-slate-400">Ensure your .env file has INSTRUCTIONS_FILE and PROJECT_PATH set correctly.</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </body>
-
-    </html>
-<?php }
-
 function showLastLog()
 {
     global $config;
@@ -1750,6 +1732,68 @@ function runTasksWithShell($tasks, &$fullLog, &$fullLogRaw, &$taskStatus)
 
 // --- VIEWS ---
 // ================================================================================
+
+function renderValidationError($errorMessage)
+{ ?>
+    <!DOCTYPE html>
+    <html lang="en">
+
+    <head>
+        <meta charset="UTF-8">
+        <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+        <title>Deployment Configuration Error</title>
+        <?= renderHeadImports() ?>
+    </head>
+
+    <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-300 p-8 font-mono text-sm transition-colors duration-200">
+        <div class="max-w-2xl mx-auto">
+            <div class="mt-8 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-500/50 p-8 rounded-lg shadow-lg dark:shadow-xl">
+                <div class="flex items-start gap-4">
+                    <div class="text-4xl">❌</div>
+                    <div class="flex-1">
+                        <h1 class="text-xl font-bold text-rose-900 dark:text-rose-100 mb-4">Deployment Configuration Error</h1>
+                        <p class="text-rose-800 dark:text-rose-200 mb-6 leading-relaxed">
+                            <?= htmlspecialchars($errorMessage, ENT_QUOTES, 'UTF-8') ?>
+                        </p>
+                        <div class="flex gap-3">
+                            <a href="/health" class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded text-sm font-bold transition">
+                                Back to Dashboard
+                            </a>
+                            <button onclick="window.history.back()" class="border border-rose-300 dark:border-rose-500/50 hover:bg-rose-50 dark:hover:bg-rose-900/30 text-rose-700 dark:text-rose-200 px-4 py-2 rounded text-sm font-bold transition">
+                                Go Back
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-8 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-6 rounded-lg shadow-sm dark:shadow-xl">
+                <h2 class="text-slate-400 dark:text-slate-500 text-[10px] font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">Common Issues & Solutions</h2>
+                <div class="space-y-4 text-sm">
+                    <div>
+                        <h3 class="font-bold text-slate-700 dark:text-slate-300 mb-2">Missing YQ_PATH Variable</h3>
+                        <p class="text-slate-600 dark:text-slate-400 mb-2">If using a YAML file (deploy.yml), you need to set the YQ_PATH environment variable:</p>
+                        <pre class="bg-slate-50 dark:bg-slate-950 p-3 rounded text-xs border border-slate-200 dark:border-slate-800">YQ_PATH=/usr/bin/yq</pre>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-slate-700 dark:text-slate-300 mb-2">Invalid Instructions Format</h3>
+                        <p class="text-slate-600 dark:text-slate-400 mb-2">Check your deploy.json or deploy.yml file format:</p>
+                        <pre class="bg-slate-50 dark:bg-slate-950 p-3 rounded text-xs border border-slate-200 dark:border-slate-800">[
+  { "name": "Task 1", "run": "command" },
+  { "name": "Task 2", "run": "command" }
+]</pre>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-slate-700 dark:text-slate-300 mb-2">Missing Configuration</h3>
+                        <p class="text-slate-600 dark:text-slate-400">Ensure your .env file has INSTRUCTIONS_FILE and PROJECT_PATH set correctly.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </body>
+
+    </html>
+<?php }
 
 function renderHeadImports()
 {
