@@ -100,11 +100,20 @@ $config = [
     'gitlab_base_url' => env('GITLAB_BASE_URL') ?? 'https://gitlab.com',
     'artifact_deploy_dir' => env('ARTIFACT_DEPLOY_DIR') ?? __DIR__.'/artifact-deploy',
     'artifact_instructions' => env('ARTIFACT_INSTRUCTIONS_FILE') ?? 'artifact-deploy.json',
+    'dashboard_route' => env('DASHBOARD_ROUTE') ?? 'health',
 ];
 
 // Ensure logs directory exists
 if (! is_dir($config['logs_path'])) {
     mkdir($config['logs_path'], 0777, true);
+}
+
+// Helper function to get dashboard URL
+function dashboardUrl($path = '')
+{
+    global $config;
+    $route = $config['dashboard_route'] ?? 'health';
+    return '/'.$route.($path ? '?'.$path : '');
 }
 
 // Ensure paths with realpaths
@@ -254,7 +263,7 @@ function actionStatusData()
 
 function actionHome()
 {
-    header('Location: /health');
+    header('Location: '.dashboardUrl());
     exit();
 }
 
@@ -293,7 +302,7 @@ function actionWebhookDeploy()
         exec('php '.__FILE__.' run-deploy '.escapeshellarg($host).' > /dev/null 2>&1 &');
         // wait lock file
         usleep(500000);
-        header('Location: /health');
+        header('Location: '.dashboardUrl());
         exit();
     }
 
@@ -433,12 +442,14 @@ function actionStatusLive()
 
 function actionNotifyTest()
 {
+    global $config;
     $server = $_SERVER['HTTP_HOST'] ?? 'localhost';
     // date in UTC-5  America/Bogota timezone
     $date = new DateTime('now', new DateTimeZone('America/Bogota'));
     $formattedDate = prugueStrData($date->format('Y-m-d H:i:s'));
     $protocol = isset($_SERVER['HTTPS']) ? 'https://' : 'http://';
-    $returnTo = $_GET['return'] ?? 'health';
+    $defaultDashboard = $config['dashboard_route'] ?? 'health';
+    $returnTo = $_GET['return'] ?? $defaultDashboard;
     $dashboardUrl = "$protocol{$server}/$returnTo";
 
     // @mago-format-ignore-next
@@ -1660,7 +1671,7 @@ function clearHistory()
             exit('Deployment already in progress.');
         }
     }
-    header('Location: /health?cleared=1');
+    header('Location: ' . dashboardUrl('cleared=1'));
 }
 
 function runTasksWithShell($tasks, &$fullLog, &$fullLogRaw, &$taskStatus)
@@ -2840,7 +2851,7 @@ function renderLiveStatus()
 {
     global $statusFile;
     if (! file_exists($statusFile)) {
-        header('Location: /health');
+        header('Location: ' . dashboardUrl());
         exit();
     }
     $data = json_decode(file_get_contents($statusFile), true);

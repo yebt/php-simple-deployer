@@ -101,6 +101,37 @@ All configuration is done via `.env`:
 
 ---
 
+## Dashboard Routes
+
+SPHPD provides two dashboard views:
+
+### `/health` — Classic Dashboard
+- Full configuration details with sidebar layout
+- Shows all system and artifact config variables
+- Expanded view with examples and detailed status
+
+### `/health2` — Modern Dashboard  
+- Minimal, professional design
+- Light and dark theme support (adapts to system preference)
+- Compact config checks (OK/?? only, no sensitive values exposed)
+- Optimized for both desktop and mobile
+
+### Configure the Default Dashboard
+
+Set `DASHBOARD_ROUTE` in your `.env` to choose which dashboard opens by default:
+
+```env
+# Use the modern dashboard as default
+DASHBOARD_ROUTE=health2
+
+# Or keep the classic (default if not set)
+DASHBOARD_ROUTE=health
+```
+
+When configured, all redirects (home `/`, post-deploy, clear-history, etc.) will use this route automatically.
+
+---
+
 ## Instruction File Format
 
 Each instruction file is an **array of tasks**. A task has:
@@ -147,8 +178,9 @@ Commands within a task share the same shell session, so environment variables ex
 
 | Method     | Path                       | Description                                                     |
 | ---------- | -------------------------- | --------------------------------------------------------------- |
-| `GET`      | `/`                        | Redirects to `/health`                                          |
-| `GET`      | `/health`                  | Main dashboard — history, config status, example                |
+| `GET`      | `/`                        | Redirects to dashboard (see `DASHBOARD_ROUTE`)                  |
+| `GET`      | `/health`                  | Classic dashboard — full config details, sidebar layout         |
+| `GET`      | `/health2`                 | Modern dashboard — minimal design, light/dark theme             |
 | `GET/POST` | `/webhook/deploy`          | Trigger deployment (waits for completion)                       |
 | `GET/POST` | `/webhook/deploy?manual=1` | Trigger deployment from the UI (background process)             |
 | `POST`     | `/webhook/deploy/nowait`   | Trigger deployment — returns `202` immediately                  |
@@ -166,6 +198,7 @@ Commands within a task share the same shell session, so environment variables ex
 | `GET`      | `/log/lastfraw`            | Most recent full raw stream log                                 |
 | `POST`     | `/deploy/stop`             | Stop the currently running deployment                           |
 | `GET`      | `/test-notify`             | Send a test Telegram notification                               |
+| `GET`      | `/test-notify?return=health2` | Send test and return to specific dashboard                   |
 | `GET`      | `/clear-history`           | Clear all deployment log history                                |
 
 ### Artifact Deploy
