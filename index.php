@@ -1814,6 +1814,49 @@ function renderHeadImports()
         HTML;
 }
 
+function appBaseUrl()
+{
+    $host = $_SERVER['HTTP_HOST'] ?? (defined('CLI_HOST') ? CLI_HOST : 'localhost');
+    $isHttps =
+        (! empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (isset($_SERVER['SERVER_PORT']) && (string) $_SERVER['SERVER_PORT'] === '443');
+
+    return ($isHttps ? 'https://' : 'http://').$host;
+}
+
+function resolveLogExecutionStatus($logPath)
+{
+    if (! file_exists($logPath)) {
+        return null;
+    }
+
+    $content = file_get_contents($logPath);
+    if ($content === false || trim($content) === '') {
+        return null;
+    }
+
+    $lines = preg_split('/\r\n|\r|\n/', trim($content));
+    $exitLine = $lines[count($lines) - 5] ?? end($lines) ?? '';
+    if ($exitLine === '') {
+        return null;
+    }
+
+    return str_contains($exitLine, 'EXIT: 0');
+}
+
+function formatBytesLabel($size)
+{
+    if ($size < 1024) {
+        return $size.' B';
+    }
+
+    if ($size < 1048576) {
+        return round($size / 1024, 1).' KB';
+    }
+
+    return round($size / 1048576, 2).' MB';
+}
+
 function renderHealthView()
 {
     global $config, $statusFile, $defaults;
@@ -1823,12 +1866,37 @@ function renderHealthView()
     $phpVersion = PHP_VERSION;
     $instructionExists = file_exists($config['instructions']);
     $artifactInstructionExists = file_exists($config['artifact_instructions']);
-    $logs = glob($config['logs_path'].'/*.log');
+    $logs = glob($config['logs_path'].'/*.log') ?: [];
     usort($logs, fn ($a, $b) => filemtime($b) - filemtime($a));
-    $lastLogs = array_slice($logs, 0, 5);
+    $lastLogs = array_slice($logs, 0, 3);
 
     $statusData = file_exists($statusFile) ? json_decode(file_get_contents($statusFile), true) : null;
     $isActuallyRunning = $statusData && (! isset($statusData['finished']) || ! $statusData['finished']);
+    $baseUrl = appBaseUrl();
+    $deployWebhookUrl = $baseUrl.'/webhook/deploy';
+    $artifactWebhookUrl = $baseUrl.'/webhook/artifact-deploy';
+    $logsCount = count($logs);
+    $lastLogStatus = $logs ? resolveLogExecutionStatus($logs[0]) : null;
+    $lastLogAt = $logs ? date('Y-m-d H:i:s', filemtime($logs[0])) : 'No runs yet';
+    $systemReady = $instructionExists && ! empty($config['project_path']) && ! empty($config['logs_path']);
+    $artifactReady =
+        $artifactInstructionExists
+        && ! empty($config['gitlab_token'])
+        && ! empty($config['artifact_deploy_dir'])
+        && ! empty($config['gitlab_base_url']);
+    $securityEnabled = ! empty($config['secure_token']);
+    $headlineStatusLabel = $isActuallyRunning
+        ? 'Deployment running'
+        : ($lastLogStatus === true
+            ? 'System healthy'
+            : ($lastLogStatus === false ? 'Needs attention' : 'Ready for deploy'));
+    $headlineStatusClasses = $isActuallyRunning
+        ? 'border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-300'
+        : ($lastLogStatus === true
+            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300'
+            : ($lastLogStatus === false
+                ? 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-300'
+                : 'border-slate-300 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300'));
 
     ?>
     <!DOCTYPE html>
@@ -1855,23 +1923,122 @@ function renderHealthView()
                     }
                 }, 2000); // Consulta cada 2 segundos
             <?php endif; ?>
+
+            async function copyToClipboard(button, value) {
+                const originalText = button.dataset.originalText || button.textContent;
+
+                try {
+                    if (navigator.clipboard && window.isSecureContext) {
+                        await navigator.clipboard.writeText(value);
+                    } else {
+                        const input = document.createElement('textarea');
+                        input.value = value;
+                        input.setAttribute('readonly', '');
+                        input.style.position = 'absolute';
+                        input.style.left = '-9999px';
+                        document.body.appendChild(input);
+                        input.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(input);
+                    }
+
+                    button.dataset.originalText = originalText;
+                    button.textContent = 'Copied';
+                    button.classList.add('bg-emerald-500', 'text-white', 'border-emerald-500');
+
+                    setTimeout(() => {
+                        button.textContent = originalText;
+                        button.classList.remove('bg-emerald-500', 'text-white', 'border-emerald-500');
+                    }, 1600);
+                } catch (error) {
+                    window.prompt('Copy this value:', value);
+                }
+            }
         </script>
     </head>
 
     <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-300 p-8 font-mono text-sm transition-colors duration-200">
-        <div class="max-w-6xl mx-auto">
-            <div class="flex justify-between items-start mb-10">
-                <div>
-                    <h1 class="text-slate-900 dark:text-white font-bold text-xl tracking-tighter uppercase">SIMPLE PHP <span class="text-[#a855f7]">DEPLOYER</span></h1>
-                    <p class="text-slate-400 dark:text-slate-500">
-                        Host: <span class="text-slate-600 dark:text-slate-400"><?= $serverDomain ?></span> |
-                        IP: <span class="text-slate-600 dark:text-slate-400"><?= $serverIp ?></span> |
-                        PHP: <span class="text-slate-600 dark:text-slate-400"><?= $phpVersion ?></span>
-                    </p>
+        <div class="max-w-7xl mx-auto space-y-8">
+            <div class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-[#161b2a]/95 shadow-sm dark:shadow-xl overflow-hidden">
+                <div class="px-6 py-6 lg:px-8 lg:py-7 flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+                    <div class="space-y-4">
+                        <div class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-bold uppercase tracking-[0.2em] <?= $headlineStatusClasses ?>">
+                            <span class="inline-flex h-2 w-2 rounded-full <?= $isActuallyRunning
+                                ? 'bg-blue-500 animate-pulse'
+                                : ($lastLogStatus === true
+                                    ? 'bg-emerald-500'
+                                    : ($lastLogStatus === false ? 'bg-amber-500' : 'bg-slate-400 dark:bg-slate-500')) ?>"></span>
+                            <?= htmlspecialchars($headlineStatusLabel) ?>
+                        </div>
+
+                        <div>
+                            <h1 class="text-slate-900 dark:text-white font-bold text-2xl tracking-tight uppercase">Simple PHP <span class="text-[#a855f7]">Deployer</span></h1>
+                            <p class="mt-2 max-w-2xl text-sm text-slate-500 dark:text-slate-400">
+                                Dashboard operativo para ejecuciones manuales, webhooks y revisi&oacute;n r&aacute;pida de actividad reciente.
+                            </p>
+                        </div>
+
+                        <div class="flex flex-wrap gap-2 text-[11px]">
+                            <span class="rounded-full border border-slate-200 dark:border-slate-700 px-3 py-1 text-slate-500 dark:text-slate-300">Host: <span class="text-slate-700 dark:text-slate-100"><?= htmlspecialchars(
+                                $serverDomain,
+                            ) ?></span></span>
+                            <span class="rounded-full border border-slate-200 dark:border-slate-700 px-3 py-1 text-slate-500 dark:text-slate-300">IP: <span class="text-slate-700 dark:text-slate-100"><?= htmlspecialchars(
+                                $serverIp,
+                            ) ?></span></span>
+                            <span class="rounded-full border border-slate-200 dark:border-slate-700 px-3 py-1 text-slate-500 dark:text-slate-300">PHP <?= htmlspecialchars(
+                                $phpVersion,
+                            ) ?></span>
+                            <span class="rounded-full border border-slate-200 dark:border-slate-700 px-3 py-1 text-slate-500 dark:text-slate-300">Webhook <?= htmlspecialchars(
+                                $config['webhook_method'],
+                            ) ?></span>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3 lg:min-w-[320px]">
+                        <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/40 p-4">
+                            <div class="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">Logs</div>
+                            <div class="mt-2 text-2xl font-bold text-slate-900 dark:text-white"><?= $logsCount ?></div>
+                            <div class="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Historial total disponible</div>
+                        </div>
+                        <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/40 p-4">
+                            <div class="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">Last result</div>
+                            <div class="mt-2 text-sm font-bold <?= $lastLogStatus === true
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : ($lastLogStatus === false
+                                    ? 'text-amber-600 dark:text-amber-400'
+                                    : 'text-slate-900 dark:text-white') ?>">
+                                <?= $lastLogStatus === true
+                                    ? 'Success'
+                                    : ($lastLogStatus === false ? 'Failed' : 'No executions') ?>
+                            </div>
+                            <div class="mt-1 text-[11px] text-slate-500 dark:text-slate-400"><?= htmlspecialchars(
+                                $lastLogAt,
+                            ) ?></div>
+                        </div>
+                        <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/40 p-4">
+                            <div class="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">Deploy setup</div>
+                            <div class="mt-2 text-sm font-bold <?= $systemReady
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : 'text-rose-600 dark:text-rose-400' ?>">
+                                <?= $systemReady ? 'Ready' : 'Review required' ?>
+                            </div>
+                            <div class="mt-1 text-[11px] text-slate-500 dark:text-slate-400"><?= htmlspecialchars(
+                                basename($config['instructions']),
+                            ) ?></div>
+                        </div>
+                        <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/40 p-4">
+                            <div class="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">Artifact setup</div>
+                            <div class="mt-2 text-sm font-bold <?= $artifactReady
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : 'text-rose-600 dark:text-rose-400' ?>">
+                                <?= $artifactReady ? 'Ready' : 'Review required' ?>
+                            </div>
+                            <div class="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                                <?= htmlspecialchars(basename($config['artifact_instructions'])) ?>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <?php if ($isActuallyRunning): ?>
-                    <a href="/status/live" class="bg-blue-600 text-white px-3 py-1 text-xs font-bold rounded shadow-lg shadow-blue-500/20 animate-pulse">PROCESS RUNNING</a>
-                <?php endif; ?>
             </div>
 
             <?php if (! $instructionExists): ?>
@@ -1880,10 +2047,186 @@ function renderHealthView()
                 </div>
             <?php endif; ?>
 
-            <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                <div class="lg:col-span-1 space-y-4">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div class="lg:col-span-2 space-y-6">
+                    <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm dark:shadow-xl overflow-hidden">
+                        <div class="px-6 py-5 border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/40 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <h2 class="text-slate-900 dark:text-white text-sm font-bold uppercase tracking-[0.2em]">Webhook endpoints</h2>
+                                <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">Copia las URLs p&uacute;blicas para integraciones de despliegue y artifacts.</p>
+                            </div>
+                            <?php if ($securityEnabled): ?>
+                                <div class="text-[11px] text-slate-500 dark:text-slate-400">
+                                    Auth: <span class="text-slate-800 dark:text-slate-100 font-bold">X-Deploy-Token</span>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+
+                        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 p-6">
+                            <?php
+                            $webhookCards = [
+                                [
+                                    'title' => 'Call Deploy',
+                                    'description' => 'Webhook principal para ejecutar el despliegue est&aacute;ndar.',
+                                    'url' => $deployWebhookUrl,
+                                    'path' => '/webhook/deploy',
+                                ],
+                                [
+                                    'title' => 'Artifact Deploy',
+                                    'description' => 'Webhook para descargar, extraer y desplegar artifacts de GitLab.',
+                                    'url' => $artifactWebhookUrl,
+                                    'path' => '/webhook/artifact-deploy',
+                                ],
+                            ];
+
+                            foreach ($webhookCards as $card): ?>
+                                <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/30 p-5 space-y-4">
+                                    <div class="flex items-start justify-between gap-3">
+                                        <div>
+                                            <div class="text-sm font-bold text-slate-900 dark:text-white"><?= $card['title'] ?></div>
+                                            <p class="mt-1 text-xs text-slate-500 dark:text-slate-400"><?= $card['description'] ?></p>
+                                        </div>
+                                        <span class="rounded-full border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-300"><?= htmlspecialchars(
+                                            $config['webhook_method'],
+                                        ) ?></span>
+                                    </div>
+
+                                    <div class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/60 p-3">
+                                        <div class="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">URL</div>
+                                        <div class="mt-2 break-all text-xs text-slate-700 dark:text-slate-200"><?= htmlspecialchars(
+                                            $card['url'],
+                                        ) ?></div>
+                                    </div>
+
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <button type="button"
+                                            onclick='copyToClipboard(this, <?= json_encode($card['url']) ?>)'
+                                            class="rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+                                            Copy URL
+                                        </button>
+                                        <span class="text-[11px] text-slate-500 dark:text-slate-400">Path: <span class="text-slate-700 dark:text-slate-200"><?= htmlspecialchars(
+                                            $card['path'],
+                                        ) ?></span></span>
+                                    </div>
+
+                                    <?php if ($securityEnabled): ?>
+                                        <p class="text-[11px] text-slate-500 dark:text-slate-400">
+                                            Si el token est&aacute; activo, env&iacute;a <span class="font-bold text-slate-700 dark:text-slate-100">X-Deploy-Token</span>
+                                            o agrega <span class="font-bold text-slate-700 dark:text-slate-100">?token=...</span>.
+                                        </p>
+                                    <?php endif; ?>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+
+                    <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm dark:shadow-xl overflow-hidden">
+                        <div class="px-6 py-5 border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/40 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <h2 class="text-slate-900 dark:text-white text-sm font-bold uppercase tracking-[0.2em]">Recent execution history</h2>
+                                <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">Mostrando los 3 &uacute;ltimos logs. El historial completo sigue disponible en la vista dedicada.</p>
+                            </div>
+                            <a href="/alllogs" class="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold uppercase tracking-[0.18em] transition">View all logs</a>
+                        </div>
+
+                        <div class="p-6 space-y-4">
+                            <?php foreach ($lastLogs as $logPath):
+                                $fn = basename($logPath);
+                                $logName = pathinfo($fn, PATHINFO_FILENAME);
+                                $isOk = resolveLogExecutionStatus($logPath);
+                                $statusLabel = $isOk === true ? 'Success' : ($isOk === false ? 'Failed' : 'Unknown');
+                                $statusClasses = $isOk === true
+                                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                                    : ($isOk === false
+                                        ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
+                                        : 'bg-slate-500/10 text-slate-600 dark:text-slate-400');
+                                ?>
+                                <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/30 p-5">
+                                    <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                                        <div class="space-y-2 min-w-0">
+                                            <div class="flex flex-wrap items-center gap-2">
+                                                <span class="rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] <?= $statusClasses ?>"><?= $statusLabel ?></span>
+                                                <span class="text-[11px] text-slate-500 dark:text-slate-400"><?= date(
+                                                    'Y-m-d H:i:s',
+                                                    filemtime($logPath),
+                                                ) ?></span>
+                                                <span class="text-[11px] text-slate-400 dark:text-slate-500">&bull;</span>
+                                                <span class="text-[11px] text-slate-500 dark:text-slate-400"><?= formatBytesLabel(
+                                                    filesize($logPath),
+                                                ) ?></span>
+                                            </div>
+                                            <div class="truncate text-sm font-bold text-slate-900 dark:text-white"><?= htmlspecialchars(
+                                                $fn,
+                                            ) ?></div>
+                                        </div>
+
+                                        <div class="flex flex-wrap items-center gap-2">
+                                            <a target="_blank" href="/log/rview/<?= urlencode($logName) ?>" class="rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition">Open</a>
+                                            <a target="_blank" href="/log/bview/<?= urlencode($logName) ?>" class="rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition">Raw</a>
+                                            <a target="_blank" href="/log/htmlview/<?= urlencode($logName) ?>" class="rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition">HTML</a>
+                                        </div>
+                                    </div>
+                                </div>
+                            <?php endforeach;
+                            if (! $lastLogs): ?>
+                                <div class="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-10 text-center text-sm text-slate-400 dark:text-slate-500">
+                                    No execution history found.
+                                </div>
+                            <?php endif; ?>
+                        </div>
+
+                        <div class="px-6 py-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/40 flex flex-col gap-2 text-[11px] text-slate-500 dark:text-slate-400 sm:flex-row sm:items-center sm:justify-between">
+                            <span><?= $logsCount ?> log file(s) available</span>
+                            <span>Use <span class="font-bold text-slate-700 dark:text-slate-200">/alllogs</span> for full browsing.</span>
+                        </div>
+                    </div>
+
+                    <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-6 rounded-2xl shadow-sm dark:shadow-xl">
+                        <h2 class="text-slate-900 dark:text-white text-sm font-bold mb-4 uppercase tracking-[0.2em]">Example deploy.json</h2>
+                        <pre class="text-[11px] text-indigo-700 dark:text-indigo-300 overflow-x-auto bg-slate-50 dark:bg-slate-950 p-4 rounded-xl border border-slate-100 dark:border-slate-800">[
+  { "name": "Git Pull", "run": "git pull origin main" },
+  { "name": "Install Dependencies", "run": "composer install --no-dev" },
+  { "name": "Optimize Cache", "run": "php artisan config:cache" }
+]</pre>
+                    </div>
+                </div>
+
+                <div class="space-y-6">
+                    <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm dark:shadow-xl">
+                        <h2 class="text-slate-900 dark:text-white text-sm font-bold mb-4 uppercase tracking-[0.2em]">Quick actions</h2>
+                        <div class="space-y-2">
+                            <?php if ($isActuallyRunning): ?>
+                                <a href="/status/live" class="flex items-center justify-center gap-2 w-full bg-blue-600 text-white py-3 rounded-xl text-xs font-bold uppercase tracking-[0.18em] shadow-lg shadow-blue-500/20 animate-pulse">
+                                    <span class="inline-block w-2 h-2 bg-white rounded-full"></span>
+                                    Process running
+                                </a>
+                            <?php else: ?>
+                                <a href="/webhook/deploy?manual=1"
+                                    onclick="return confirm('Start deployment?')"
+                                    class="block w-full text-center bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 py-3 rounded-xl text-xs font-bold hover:opacity-90 transition uppercase tracking-[0.18em]">Manual deploy</a>
+                            <?php endif; ?>
+
+                            <?php if (env('MODE', 'production') !== 'production'): ?>
+                                <a href="/debugdeploy"
+                                    target="_blank"
+                                    onclick="return confirm('Debug deployment?')"
+                                    class="block w-full text-center bg-amber-700 text-white py-3 rounded-xl text-xs font-bold hover:bg-amber-600 transition uppercase tracking-[0.18em]">Debug deployment</a>
+                            <?php endif; ?>
+
+                            <?php if (isset($statusData['finished'])): ?>
+                                <a href="/status/live" class="block w-full text-center border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 py-3 rounded-xl text-[11px] font-bold hover:bg-emerald-500/5 transition uppercase tracking-[0.18em]">
+                                    View last result
+                                </a>
+                            <?php endif; ?>
+
+                            <a href="/test-notify" class="block w-full text-center border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 py-3 rounded-xl text-xs transition uppercase tracking-[0.18em]">Test notification</a>
+                            <a href="/alllogs" class="block w-full text-center border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 py-3 rounded-xl text-xs transition uppercase tracking-[0.18em]">All logs</a>
+                            <a href="/clear-history" onclick="return confirm('Clear all logs?')" class="block w-full text-center text-rose-500 hover:text-rose-400 py-2 text-xs transition uppercase tracking-[0.18em]">Clear history</a>
+                        </div>
+                    </div>
+
                     <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-5 rounded-lg shadow-sm dark:shadow-xl text-xs">
-                        <h2 class="text-slate-400 dark:text-slate-500 font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">System Config</h2>
+                        <h2 class="text-slate-900 dark:text-white font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-[0.2em]">System config</h2>
                         <div class="space-y-4 text-[11px]">
                             <?php
 
@@ -1923,7 +2266,7 @@ function renderHealthView()
                     </div>
 
                     <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-5 rounded-lg shadow-sm dark:shadow-xl text-xs">
-                        <h2 class="text-slate-400 dark:text-slate-500 font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">Artifact Config</h2>
+                        <h2 class="text-slate-900 dark:text-white font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-[0.2em]">Artifact config</h2>
                         <div class="space-y-3 text-[11px]">
                             <?php
 
@@ -1963,106 +2306,7 @@ function renderHealthView()
                             <?php endif; ?>
                         </div>
                     </div>
-
-                    <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-5 rounded-lg shadow-sm dark:shadow-xl">
-                        <h2 class="text-slate-400 dark:text-slate-500 text-[10px] font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">Quick Actions</h2>
-                        <div class="space-y-2">
-
-                            <?php if ($isActuallyRunning): ?>
-                                <button disabled class="block w-full text-center bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 py-2 rounded text-xs font-bold cursor-not-allowed uppercase tracking-widest">
-                                    <span class="inline-block w-2 h-2 bg-blue-500 rounded-full animate-ping mr-2"></span>
-                                    Running...
-                                </button>
-                            <?php else: ?>
-                                <a href="/webhook/deploy?manual=1"
-                                    onclick="return confirm('Start deployment?')"
-                                    class="block w-full text-center bg-slate-800 dark:bg-slate-800 text-white py-2 rounded text-xs font-bold hover:bg-slate-700 dark:hover:bg-slate-700 transition">MANUAL DEPLOY</a>
-
-                            <?php endif; ?>
-
-                            <?php if (env('MODE', 'production') !== 'production'): ?>
-                                <a href="/debugdeploy"
-                                    target="_blank"
-                                    onclick="return confirm('Debug deployment?')"
-                                    class="block w-full text-center bg-amber-800 dark:bg-amber-800 text-white py-2 rounded text-xs font-bold hover:bg-amber-700 dark:hover:bg-amber-700 transition">DEBUG DEPLOYMENT</a>
-                            <?php endif; ?>
-
-                            <?php if (isset($statusData['finished'])): ?>
-                                <a href="/status/live" class="block w-full text-center border border-emerald-500/30 text-emerald-500 py-2 rounded text-[10px] font-bold hover:bg-emerald-500/5 transition uppercase">
-                                    View Last Result
-                                </a>
-                            <?php endif; ?>
-                            <a href="/test-notify" class="block w-full text-center border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 py-2 rounded text-xs transition">TEST NOTIFICATION</a>
-                            <a href="/alllogs" class="block w-full text-center border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 py-2 rounded text-xs transition uppercase tracking-widest">All Logs</a>
-                            <a href="/clear-history" onclick="return confirm('Clear all logs?')" class="block w-full text-center text-rose-500 hover:text-rose-500 py-2 text-xs transition">CLEAR HISTORY</a>
-                        </div>
-                    </div>
                 </div>
-
-                <div class="lg:col-span-3 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden shadow-sm dark:shadow-xl flex flex-col">
-                    <div class="p-5 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-900/30">
-                        <h2 class="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-widest">Recent Execution History</h2>
-                        <a href="/alllogs" class="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold uppercase tracking-tighter transition">View All Logs →</a>
-                    </div>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-left border-collapse">
-                            <thead>
-                                <tr class="bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 text-[10px] uppercase">
-                                    <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800">Log Identifier</th>
-                                    <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800">Timestamp</th>
-                                    <th class="px-6 py-3 font-bold text-right border-b border-slate-100 dark:border-slate-800">Reference</th>
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
-                                <?php foreach ($lastLogs as $logPath):
-                                    $fn = basename($logPath);
-                                    $logName = pathinfo($fn, PATHINFO_FILENAME);
-                                    $content = file_get_contents($logPath);
-                                    // $isOk = str_contains($content, 'Status: SUCCESS');
-                                    // get the penultimate line of the log
-                                    $lines = preg_split('/\r\n|\r|\n/', trim($content));
-                                    $linesQuantity = count($lines);
-                                    $exitLastStatus = $lines[$linesQuantity - 5] ?? '';
-                                    $isOk = str_contains($exitLastStatus, 'EXIT: 0');
-                                    // var_dump($exitLastStatus);
-
-                                    ?>
-                                    <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition">
-                                        <td class="px-6 py-4 text-xs">
-                                            <span class="mr-2 <?= $isOk ? 'text-emerald-500' : 'text-rose-500' ?>">●</span>
-                                            <?= $fn ?>
-                                        </td>
-
-                                        <td class="px-6 py-4 text-slate-400 dark:text-slate-600 text-xs"><?= date(
-                                            'Y-m-d H:i:s',
-                                            filemtime($logPath),
-                                        ) ?></td>
-                                        <td class="px-6 py-4 text-right">
-                                            <a target="_blank" href="/log/rview/<?= urlencode($logName) ?>" class="text-blue-600 dark:text-blue-500 hover:underline font-bold text-xs transition">OPEN</a>
-                                            <a target="_blank" href="/log/bview/<?= urlencode($logName) ?>" class="text-blue-600 dark:text-blue-500 hover:underline font-bold text-xs transition">RAW</a>
-                                            <a target="_blank" href="/log/htmlview/<?= urlencode($logName) ?>" class="text-blue-600 dark:text-blue-500 hover:underline font-bold text-xs transition">HTML</a>
-                                        </td>
-                                    </tr>
-                                <?php endforeach;
-                                if (! $lastLogs): ?>
-                                    <tr>
-                                        <td colspan="3" class="p-10 text-center text-slate-400 italic">No execution history found.</td>
-                                    </tr>
-                                <?php endif; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-
-            <div class="mt-8 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-6 rounded-lg shadow-sm dark:shadow-xl">
-                <h2 class="text-slate-400 dark:text-slate-500 text-[10px] font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">Example deploy.json</h2>
-                <pre class="text-[11px] text-indigo-700 dark:text-indigo-300 overflow-x-auto bg-slate-50 dark:bg-slate-950 p-4 rounded border border-slate-100 dark:border-transparent">
-[
-  { "name": "Git Pull", "run": "git pull origin main" },
-  { "name": "Install Dependencies", "run": "composer install --no-dev" },
-  { "name": "Optimize Cache", "run": "php artisan config:cache" }
-]</pre>
             </div>
         </div>
     </body>
@@ -2121,13 +2365,7 @@ function renderLogsView()
         $fn = basename($logPath);
         $id = preg_replace('/\.log.*$/', '', $fn);
         $baseLog = $config['logs_path'].'/'.$id.'.log';
-        if (! file_exists($baseLog))
-            return null;
-        $content = file_get_contents($baseLog);
-        $lines = preg_split('/\r\n|\r|\n/', trim($content));
-        $exitLine = $lines[count($lines) - 5] ?? '';
-
-        return str_contains($exitLine, 'EXIT: 0');
+        return resolveLogExecutionStatus($baseLog);
     };
 
     ?>
@@ -2195,13 +2433,7 @@ function renderLogsView()
                                     $id = preg_replace('/\.log.*$/', '', $fn);
                                     $isOk = $resolveStatus($logPath);
                                     $size = filesize($logPath);
-                                    $sizeLabel = $size < 1024
-                                        ? $size.' B'
-                                        : (
-                                            $size < 1048576
-                                                ? round($size / 1024, 1).' KB'
-                                                : round($size / 1048576, 2).' MB'
-                                        );
+                                    $sizeLabel = formatBytesLabel($size);
                                     $viewUrl = $typeConfig[$type]['url']($id);
                                     ?>
                                     <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition">
