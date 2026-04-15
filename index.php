@@ -21,11 +21,11 @@ function dump_highlight($variable)
 class ArifactContract
 {
     public function __construct(
-        public readonly string  $project_id,
+        public readonly string $project_id,
         public readonly string $branch,
         public readonly string $job,
         public readonly string $job_id,
-    ){}
+    ) {}
 }
 
 // INITS
@@ -501,21 +501,20 @@ function actionDeployStop()
     exit();
 }
 
-
 // Aux functions
 // ================================================================================
 
 /**
  * Checks the incoming artifact deployment request, validates it, logs it, and returns a structured contract object.
- * @param string $method 
- * @param mixed $config 
- * @return ArifactContract 
+ * @param string $method
+ * @param mixed $config
+ * @return ArifactContract
  */
 function checkArtifact(string $method, $config): ArifactContract
 {
     validateSecurity();
     // Allow just post method
-    if ($method !== 'POST'){
+    if ($method !== 'POST') {
         http_response_code(405);
         exit('Method Not Allowed');
     }
@@ -532,7 +531,7 @@ function checkArtifact(string $method, $config): ArifactContract
     $job_id = $input['job_id'] ?? null;
 
     // no null some of the vars
-    if ( ! $projectId || ! $job_id) {
+    if (! $projectId || ! $job_id) {
         http_response_code(400);
         header('Content-Type: application/json');
         echo json_encode(['error' => 'Missing required fields: project_id and job_id']);
@@ -546,7 +545,6 @@ function checkArtifact(string $method, $config): ArifactContract
         job_id: $job_id,
     );
 }
-
 
 // --- LOGIC ---
 // ================================================================================
@@ -593,7 +591,7 @@ function logRequestToFile($logFilePath, $rawBody)
     file_put_contents(
         $logFilePath,
         json_encode($entry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES).PHP_EOL.str_repeat('=', 80).PHP_EOL,
-        FILE_APPEND
+        FILE_APPEND,
     );
 }
 
@@ -1015,7 +1013,8 @@ function executeArtifactDeployment(?string $projectId, string $branch = 'main', 
     // Download artifact from GitLab
     $artifactFile = $deployDir.'/artifact.zip';
     $gitlabBase = rtrim($config['gitlab_base_url'], '/');
-    $artifactUrl = "{$gitlabBase}/api/v4/projects/{$projectId}/jobs/artifacts/{$branch}/download?job={$job}";
+    //$artifactUrl = "{$gitlabBase}/api/v4/projects/{$projectId}/jobs/artifacts/{$branch}/download?job={$job}";
+    $artifactUrl = "{$gitlabBase}/api/v4/projects/{$projectId}/jobs/{$job_id}/artifacts";
 
     $logLine("Downloading artifact — project: $projectId | branch: $branch | job: $job");
     $logLine("URL: $artifactUrl");
@@ -1038,7 +1037,7 @@ function executeArtifactDeployment(?string $projectId, string $branch = 'main', 
     $curlError = curl_error($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     // DEPRECATED:
-    // curl_close($ch); 
+    // curl_close($ch);
     fclose($fp);
 
     if ($result === false) {
