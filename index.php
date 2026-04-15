@@ -2157,6 +2157,7 @@ function renderHealth2View()
     </html>
     <?php
 }
+
 function renderHeadImports()
 {
     return <<<HTML
@@ -2176,6 +2177,265 @@ function renderHeadImports()
         </style>
         HTML;
 }
+
+function renderHealth1View()
+{
+    global $config, $statusFile, $defaults;
+
+    $serverIp = $_SERVER['SERVER_ADDR'] ?? 'Local';
+    $serverDomain = $_SERVER['HTTP_HOST'] ?? 'Unknown Domain';
+    $phpVersion = PHP_VERSION;
+    $instructionExists = file_exists($config['instructions']);
+    $artifactInstructionExists = file_exists($config['artifact_instructions']);
+    $logs = glob($config['logs_path'].'/*.log');
+    usort($logs, fn ($a, $b) => filemtime($b) - filemtime($a));
+    $lastLogs = array_slice($logs, 0, 5);
+
+    $statusData = file_exists($statusFile) ? json_decode(file_get_contents($statusFile), true) : null;
+    $isActuallyRunning = $statusData && (! isset($statusData['finished']) || ! $statusData['finished']);
+
+    ?>
+    <!DOCTYPE html>
+    <html lang="en">
+
+    <head>
+        <meta charset="UTF-8">
+        <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+        <title>System Health - Deployer</title>
+        <?= renderHeadImports() ?>
+        <script>
+            <?php if ($isActuallyRunning): ?>
+                const checkStatus = setInterval(async () => {
+                    try {
+                        const response = await fetch('/status/check');
+                        const data = await response.json();
+
+                        if (data.finished === true) {
+                            clearInterval(checkStatus);
+                            window.location.reload();
+                        }
+                    } catch (e) {
+                        console.error("Error checking status:", e);
+                    }
+                }, 2000); // Consulta cada 2 segundos
+            <?php endif; ?>
+        </script>
+    </head>
+
+    <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-300 p-8 font-mono text-sm transition-colors duration-200">
+        <div class="max-w-6xl mx-auto">
+            <div class="flex justify-between items-start mb-10">
+                <div>
+                    <h1 class="text-slate-900 dark:text-white font-bold text-xl tracking-tighter uppercase">SIMPLE PHP <span class="text-[#a855f7]">DEPLOYER</span></h1>
+                    <p class="text-slate-400 dark:text-slate-500">
+                        Host: <span class="text-slate-600 dark:text-slate-400"><?= $serverDomain ?></span> |
+                        IP: <span class="text-slate-600 dark:text-slate-400"><?= $serverIp ?></span> |
+                        PHP: <span class="text-slate-600 dark:text-slate-400"><?= $phpVersion ?></span>
+                    </p>
+                </div>
+                <?php if ($isActuallyRunning): ?>
+                    <a href="/status/live" class="bg-blue-600 text-white px-3 py-1 text-xs font-bold rounded shadow-lg shadow-blue-500/20 animate-pulse">PROCESS RUNNING</a>
+                <?php endif; ?>
+            </div>
+
+            <?php if (! $instructionExists): ?>
+                <div class="bg-amber-100 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-500/50 p-4 rounded mb-8 text-amber-700 dark:text-amber-200">
+                    <span class="font-bold">ALERT:</span> Instruction file not found at "<?= $config['instructions'] ?>".
+                </div>
+            <?php endif; ?>
+
+            <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                <div class="lg:col-span-1 space-y-4">
+                    <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-5 rounded-lg shadow-sm dark:shadow-xl text-xs">
+                        <h2 class="text-slate-400 dark:text-slate-500 font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">System Config</h2>
+                        <div class="space-y-4 text-[11px]">
+                            <?php
+
+                            $vars = [
+                                'Path' => 'project_path',
+                                'Instructions file' => 'instructions',
+                                'Logs path' => 'logs_path',
+                                'Token' => 'bot_token',
+                                'Security' => 'secure_token',
+                            ];
+                            foreach ($vars as $label => $key):
+                                $isSet = ! empty($config[$key]);
+                                $isDefault =
+                                    isset($defaults[strtoupper($key)])
+                                    && $config[$key] === $defaults[strtoupper($key)][0];
+                                ?>
+                                <div class="flex flex-row items-center justify-between gap-4">
+                                    <div class="flex items-center gap-1 min-w-0">
+                                        <span class="text-slate-400 dark:text-slate-500 uppercase truncate"><?= $label ?></span>
+                                    </div>
+
+                                    <div>
+
+                                        <?php if ($isDefault): ?>
+                                            <span class="text-slate-400 dark:text-slate-600 font-bold tracking-tighter shrink-0">(DEFAULT)</span>
+                                        <?php endif; ?>
+                                        <span class="px-2 py-0.5 rounded font-bold shrink-0 <?= $isSet
+                                            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-500'
+                                            : 'bg-rose-500/10 text-rose-600 dark:text-rose-500' ?>">
+                                            <?= $isSet ? '0K' : '??' ?>
+                                        </span>
+
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+
+                    <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-5 rounded-lg shadow-sm dark:shadow-xl text-xs">
+                        <h2 class="text-slate-400 dark:text-slate-500 font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">Artifact Config</h2>
+                        <div class="space-y-3 text-[11px]">
+                            <?php
+
+                            $artifactVars = [
+                                ['label' => 'GitLab Token', 'isSet' => ! empty($config['gitlab_token'])],
+                                [
+                                    'label' => 'Instructions',
+                                    'isSet' => $artifactInstructionExists,
+                                    'value' => basename($config['artifact_instructions']),
+                                ],
+                                ['label' => 'Deploy Dir', 'isSet' => ! empty($config['artifact_deploy_dir'])],
+                                ['label' => 'GitLab URL', 'isSet' => ! empty($config['gitlab_base_url'])],
+                            ];
+                            foreach ($artifactVars as $av): ?>
+                                <div class="flex flex-row items-center justify-between gap-4">
+                                    <div class="text-slate-400 dark:text-slate-500 uppercase truncate"><?= $av['label'] ?>
+
+                                        <?php if (isset($av['value'])): ?>
+                                            <span class="text-slate-400 dark:text-slate-600 text-[10px] truncate max-w-[80px] lowercase"><?= htmlspecialchars(
+                                                $av['value'],
+                                            ) ?></span>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="flex items-center gap-1 shrink-0">
+                                        <span class="px-2 py-0.5 rounded font-bold <?= $av['isSet']
+                                            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-500'
+                                            : 'bg-rose-500/10 text-rose-600 dark:text-rose-500' ?>">
+                                            <?= $av['isSet'] ? '0K' : '??' ?>
+                                        </span>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                            <?php if (! $artifactInstructionExists): ?>
+                                <p class="text-rose-500 dark:text-rose-400 text-[10px] pt-1 break-all">
+                                    Not found: <?= htmlspecialchars($config['artifact_instructions']) ?>
+                                </p>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+
+                    <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-5 rounded-lg shadow-sm dark:shadow-xl">
+                        <h2 class="text-slate-400 dark:text-slate-500 text-[10px] font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">Quick Actions</h2>
+                        <div class="space-y-2">
+
+                            <?php if ($isActuallyRunning): ?>
+                                <button disabled class="block w-full text-center bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 py-2 rounded text-xs font-bold cursor-not-allowed uppercase tracking-widest">
+                                    <span class="inline-block w-2 h-2 bg-blue-500 rounded-full animate-ping mr-2"></span>
+                                    Running...
+                                </button>
+                            <?php else: ?>
+                                <a href="/webhook/deploy?manual=1"
+                                    onclick="return confirm('Start deployment?')"
+                                    class="block w-full text-center bg-slate-800 dark:bg-slate-800 text-white py-2 rounded text-xs font-bold hover:bg-slate-700 dark:hover:bg-slate-700 transition">MANUAL DEPLOY</a>
+
+                            <?php endif; ?>
+
+                            <?php if (env('MODE', 'production') !== 'production'): ?>
+                                <a href="/debugdeploy"
+                                    target="_blank"
+                                    onclick="return confirm('Debug deployment?')"
+                                    class="block w-full text-center bg-amber-800 dark:bg-amber-800 text-white py-2 rounded text-xs font-bold hover:bg-amber-700 dark:hover:bg-amber-700 transition">DEBUG DEPLOYMENT</a>
+                            <?php endif; ?>
+
+                            <?php if (isset($statusData['finished'])): ?>
+                                <a href="/status/live" class="block w-full text-center border border-emerald-500/30 text-emerald-500 py-2 rounded text-[10px] font-bold hover:bg-emerald-500/5 transition uppercase">
+                                    View Last Result
+                                </a>
+                            <?php endif; ?>
+                            <a href="/test-notify" class="block w-full text-center border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 py-2 rounded text-xs transition">TEST NOTIFICATION</a>
+                            <a href="/alllogs" class="block w-full text-center border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 py-2 rounded text-xs transition uppercase tracking-widest">All Logs</a>
+                            <a href="/clear-history" onclick="return confirm('Clear all logs?')" class="block w-full text-center text-rose-500 hover:text-rose-500 py-2 text-xs transition">CLEAR HISTORY</a>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="lg:col-span-3 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden shadow-sm dark:shadow-xl flex flex-col">
+                    <div class="p-5 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-900/30">
+                        <h2 class="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-widest">Recent Execution History</h2>
+                        <a href="/alllogs" class="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold uppercase tracking-tighter transition">View All Logs →</a>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 text-[10px] uppercase">
+                                    <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800">Log Identifier</th>
+                                    <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800">Timestamp</th>
+                                    <th class="px-6 py-3 font-bold text-right border-b border-slate-100 dark:border-slate-800">Reference</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                                <?php foreach ($lastLogs as $logPath):
+                                    $fn = basename($logPath);
+                                    $logName = pathinfo($fn, PATHINFO_FILENAME);
+                                    $content = file_get_contents($logPath);
+                                    // $isOk = str_contains($content, 'Status: SUCCESS');
+                                    // get the penultimate line of the log
+                                    $lines = preg_split('/\r\n|\r|\n/', trim($content));
+                                    $linesQuantity = count($lines);
+                                    $exitLastStatus = $lines[$linesQuantity - 5] ?? '';
+                                    $isOk = str_contains($exitLastStatus, 'EXIT: 0');
+                                    // var_dump($exitLastStatus);
+
+                                    ?>
+                                    <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition">
+                                        <td class="px-6 py-4 text-xs">
+                                            <span class="mr-2 <?= $isOk ? 'text-emerald-500' : 'text-rose-500' ?>">●</span>
+                                            <?= $fn ?>
+                                        </td>
+
+                                        <td class="px-6 py-4 text-slate-400 dark:text-slate-600 text-xs"><?= date(
+                                            'Y-m-d H:i:s',
+                                            filemtime($logPath),
+                                        ) ?></td>
+                                        <td class="px-6 py-4 text-right">
+                                            <a target="_blank" href="/log/rview/<?= urlencode($logName) ?>" class="text-blue-600 dark:text-blue-500 hover:underline font-bold text-xs transition">OPEN</a>
+                                            <a target="_blank" href="/log/bview/<?= urlencode($logName) ?>" class="text-blue-600 dark:text-blue-500 hover:underline font-bold text-xs transition">RAW</a>
+                                            <a target="_blank" href="/log/htmlview/<?= urlencode($logName) ?>" class="text-blue-600 dark:text-blue-500 hover:underline font-bold text-xs transition">HTML</a>
+                                        </td>
+                                    </tr>
+                                <?php endforeach;
+                                if (! $lastLogs): ?>
+                                    <tr>
+                                        <td colspan="3" class="p-10 text-center text-slate-400 italic">No execution history found.</td>
+                                    </tr>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-8 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-6 rounded-lg shadow-sm dark:shadow-xl">
+                <h2 class="text-slate-400 dark:text-slate-500 text-[10px] font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">Example deploy.json</h2>
+                <pre class="text-[11px] text-indigo-700 dark:text-indigo-300 overflow-x-auto bg-slate-50 dark:bg-slate-950 p-4 rounded border border-slate-100 dark:border-transparent">
+[
+  { "name": "Git Pull", "run": "git pull origin main" },
+  { "name": "Install Dependencies", "run": "composer install --no-dev" },
+  { "name": "Optimize Cache", "run": "php artisan config:cache" }
+]</pre>
+            </div>
+        </div>
+    </body>
+
+    </html>
+<?php
+}
+
+
 
 function appBaseUrl()
 {
