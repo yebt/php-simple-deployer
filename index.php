@@ -1773,7 +1773,7 @@ function renderValidationError($errorMessage)
                             <?= htmlspecialchars($errorMessage, ENT_QUOTES, 'UTF-8') ?>
                         </p>
                         <div class="flex gap-3">
-                            <a href="/health" class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded text-sm font-bold transition">
+                            <a href="<?= dashboardUrl() ?>" class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded text-sm font-bold transition">
                                 Back to Dashboard
                             </a>
                             <button onclick="window.history.back()" class="border border-rose-300 dark:border-rose-500/50 hover:bg-rose-50 dark:hover:bg-rose-900/30 text-rose-700 dark:text-rose-200 px-4 py-2 rounded text-sm font-bold transition">
@@ -2753,7 +2753,7 @@ function renderLogsView()
                     <h1 class="text-slate-900 dark:text-white font-bold text-xl tracking-tighter uppercase">SIMPLE PHP <span class="text-[#a855f7]">DEPLOYER</span></h1>
                     <p class="text-slate-400 dark:text-slate-500">Execution Logs</p>
                 </div>
-                <a href="/health" class="text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-bold uppercase tracking-tighter">← Dashboard</a>
+                <a href="<?= dashboardUrl() ?>" class="text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-bold uppercase tracking-tighter">← Dashboard</a>
             </div>
 
             <!-- Tabs -->
@@ -2865,6 +2865,8 @@ function renderLiveStatus()
         <title>Execution Status</title>
         <?= renderHeadImports() ?>
         <script>
+            window.dashboardUrl = '<?= dashboardUrl() ?>';
+
             async function updateStatus() {
                 try {
                     const response = await fetch('/status/data');
@@ -2982,7 +2984,7 @@ function renderLiveStatus()
                         resultContainer.innerHTML = `<span>${data.success ? '✓ Deployment Completed' : '✕ Deployment Failed'}</span><span>Duration: ${data.duration}s</span>`;
 
                         document.getElementById('action-buttons').innerHTML = `
-                            <a href="/health" class="bg-slate-800 text-white px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-700 transition">BACK TO DASHBOARD</a>
+                            <a href="${window.dashboardUrl}" class="bg-slate-800 text-white px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-700 transition">BACK TO DASHBOARD</a>
                             <a href="/log/view?file=${encodeURIComponent(data.log_file)}" class="border border-slate-200 dark:border-slate-800 px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition">VIEW FULL LOG</a>
                         `;
 
@@ -3074,7 +3076,7 @@ function renderLiveStatus()
                     <p id="status-text" class="text-[9px] text-slate-400 dark:text-slate-600 uppercase tracking-widest italic">
                         System executing instructions...
                     </p>
-                    <a href="/health" class="text-[10px] text-blue-500 hover:underline">Exit Live View</a>
+                    <a href="<?= dashboardUrl() ?>" class="text-[10px] text-blue-500 hover:underline">Exit Live View</a>
                 </div>
 
                 <div id="result-container" class="hidden mb-4"></div>
