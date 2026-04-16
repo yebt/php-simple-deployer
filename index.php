@@ -15,6 +15,19 @@ function dump_highlight($variable)
     highlight_string($output);
 }
 
+// CLASS
+// ================================================================================
+
+class ArifactContract
+{
+    public function __construct(
+        public readonly string $project_id,
+        public readonly string $branch,
+        public readonly string $job,
+        /* public readonly string $job_id, */
+    ) {}
+}
+
 // INITS
 // ================================================================================
 
@@ -83,11 +96,24 @@ $config = [
     'thread_id' => env('TELEGRAM_THREAD_ID') ?? null,
     'secure_token' => env('SECURITY_TOKEN') ?? '',
     'webhook_method' => env('WEBHOOK_METHOD') ?? $defaults['WEBHOOK_METHOD'][0],
+    'gitlab_token' => env('GITLAB_TOKEN') ?? '',
+    'gitlab_base_url' => env('GITLAB_BASE_URL') ?? 'https://gitlab.com',
+    'artifact_deploy_dir' => env('ARTIFACT_DEPLOY_DIR') ?? __DIR__.'/artifact-deploy',
+    'artifact_instructions' => env('ARTIFACT_INSTRUCTIONS_FILE') ?? 'artifact-deploy.json',
+    'dashboard_route' => env('DASHBOARD_ROUTE') ?? 'health',
 ];
 
 // Ensure logs directory exists
 if (! is_dir($config['logs_path'])) {
     mkdir($config['logs_path'], 0777, true);
+}
+
+// Helper function to get dashboard URL
+function dashboardUrl($path = '')
+{
+    global $config;
+    $route = $config['dashboard_route'] ?? 'health';
+    return '/'.$route.($path ? '?'.$path : '');
 }
 
 // Ensure paths with realpaths
@@ -105,6 +131,18 @@ $statusFile = $config['logs_path'].'/.current_status';
 if (isset($argv[1]) && $argv[1] === 'run-deploy') {
     define('CLI_HOST', $argv[2] ?? 'localhost');
     executeDeploymentWithSingleShellProccess();
+    exit();
+}
+
+// Execute artifact deployment if called from CLI
+if (isset($argv[1]) && $argv[1] === 'run-artifact-deploy') {
+    define('CLI_HOST', $argv[2] ?? 'localhost');
+    executeArtifactDeployment(
+        $argv[3] ?? null,
+        $argv[5] ?? 'build',
+        $argv[6] ?? null,
+        $argv[4] ?? 'main',
+    );
     exit();
 }
 
@@ -144,6 +182,9 @@ class RegExpRouter
     }
 }
 
+// ROUTES
+// ================================================================================
+
 $router = new RegExpRouter;
 
 // ROUTES
@@ -155,12 +196,16 @@ $router->add('/status/check', 'actionStatusCheck');
 $router->add('/status/data', 'actionStatusData');
 $router->add('/', 'actionHome');
 $router->add('/health', 'actionHealthView');
+$router->add('/health1', 'actionHealth1View');
+$router->add('/health2', 'actionHealth2View');
 
 if (env('MODE', 'production') !== 'production') {
     $router->add('/debugdeploy', 'actionDebugDeploy');
 }
 $router->add('/webhook/deploy', 'actionWebhookDeploy');
 $router->add('/webhook/deploy/nowait', 'actionWebhookDeployNoWait');
+$router->add('/webhook/artifact-deploy', 'actionWebhookArtifactDeploy');
+$router->add('/webhook/artifact-deploy/nowait', 'actionWebhookArtifactDeployNoWait');
 
 $router->add('/alllogs', 'actionLogsView');
 $router->add('/log/view', 'actionLogView');
@@ -182,7 +227,7 @@ $router->add('404', function () {
     echo '404 Route Not Found';
 });
 
-// 2. Router
+// 2. Router init
 $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $method = $_SERVER['REQUEST_METHOD'];
 
@@ -219,13 +264,23 @@ function actionStatusData()
 
 function actionHome()
 {
-    header('Location: /health');
+    header('Location: '.dashboardUrl());
     exit();
 }
 
 function actionHealthView()
 {
     renderHealthView();
+}
+
+function actionHealth1View()
+{
+    renderHealth1View();
+}
+
+function actionHealth2View()
+{
+    renderHealth2View();
 }
 
 function actionWebhookDeploy()
@@ -253,7 +308,7 @@ function actionWebhookDeploy()
         exec('php '.__FILE__.' run-deploy '.escapeshellarg($host).' > /dev/null 2>&1 &');
         // wait lock file
         usleep(500000);
-        header('Location: /health');
+        header('Location: '.dashboardUrl());
         exit();
     }
 
@@ -284,6 +339,55 @@ function actionWebhookDeployNoWait()
         json_encode([
             'status' => 'accepted',
             'message' => 'Deployment initiated in background',
+        ])
+    ;
+}
+
+// ---------------------------
+function actionWebhookArtifactDeploy()
+{
+    global $method, $config;
+
+    $dataArtifact = checkArtifact($method, $config);
+
+    executeArtifactDeployment(
+        $dataArtifact->project_id,
+        $dataArtifact->job,
+        /* $dataArtifact->job_id, */
+        $dataArtifact->branch,
+    );
+}
+
+function actionWebhookArtifactDeployNoWait()
+{
+    global $config, $method;
+    validateSecurity();
+
+    $dataArtiact = checkArtifact($method, $config);
+
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    exec(
+        'php '
+        .__FILE__
+        .' run-artifact-deploy '
+        .escapeshellarg($host)
+        .' '
+        .escapeshellarg($dataArtiact->project_id)
+        .' '
+        .escapeshellarg($dataArtiact->branch)
+        .' '
+        .escapeshellarg($dataArtiact->job)
+        .' '
+        /* .escapeshellarg($dataArtiact->job_id) */
+        .' > /dev/null 2>&1 &',
+    );
+
+    http_response_code(202);
+    header('Content-Type: application/json');
+    echo
+        json_encode([
+            'status' => 'accepted',
+            'message' => 'Artifact deployment initiated in background',
         ])
     ;
 }
@@ -344,16 +448,19 @@ function actionStatusLive()
 
 function actionNotifyTest()
 {
+    global $config;
     $server = $_SERVER['HTTP_HOST'] ?? 'localhost';
     // date in UTC-5  America/Bogota timezone
     $date = new DateTime('now', new DateTimeZone('America/Bogota'));
     $formattedDate = prugueStrData($date->format('Y-m-d H:i:s'));
     $protocol = isset($_SERVER['HTTPS']) ? 'https://' : 'http://';
-    $dashboardUrl = "$protocol{$server}/health";
+    $defaultDashboard = $config['dashboard_route'] ?? 'health';
+    $returnTo = $_GET['return'] ?? $defaultDashboard;
+    $dashboardUrl = "$protocol{$server}/$returnTo";
 
     // @mago-format-ignore-next
     $res = sendTelegram(
-    <<<MARKDOWN
+        <<<MARKDOWN
 🧪 *System Check: SPHPD*
 
 *Host:* `$server`
@@ -362,8 +469,8 @@ function actionNotifyTest()
 
 [Ver Dashboard]($dashboardUrl)
 MARKDOWN
-);
-    header('Location: /health?notified='.($res ? '1' : '0'));
+    );
+    header("Location: /$returnTo?notified=".($res ? '1' : '0'));
 }
 
 function actionClearHistory()
@@ -396,10 +503,14 @@ function actionDeployStop()
         exit();
     }
 
-    // Kill all PHP processes that are running deployment
-    // This will catch the shell process (stdbuf -o0 -e0 bash)
-    $cmd = "pkill -f 'stdbuf -o0 -e0 bash' || pkill -P $$ 2>/dev/null";
-    shell_exec($cmd);
+    // Kill the tracked process by PID (covers download/extract phases for artifact deploy)
+    if (! empty($statusData['pid'])) {
+        $pid = (int) $statusData['pid'];
+        shell_exec("kill -TERM $pid 2>/dev/null; sleep 1; kill -KILL $pid 2>/dev/null");
+    }
+
+    // Kill any child shell process (covers task execution phase for both deploy types)
+    shell_exec("pkill -f 'stdbuf -o0 -e0 bash' 2>/dev/null");
 
     // Update status to stopped
     $statusData['running'] = false;
@@ -414,8 +525,100 @@ function actionDeployStop()
     exit();
 }
 
+// Aux functions
+// ================================================================================
+
+/**
+ * Checks the incoming artifact deployment request, validates it, logs it, and returns a structured contract object.
+ * @param string $method
+ * @param mixed $config
+ * @return ArifactContract
+ */
+function checkArtifact(string $method, $config): ArifactContract
+{
+    validateSecurity();
+    // Allow just post method
+    if ($method !== 'POST') {
+        http_response_code(405);
+        exit('Method Not Allowed');
+    }
+
+    // Log requests
+    $rawInput = file_get_contents('php://input');
+    logRequestToFile($config['logs_path'].'/reqs.log', $rawInput);
+
+    // validate
+    $input = json_decode($rawInput, true);
+    $projectId = $input['project_id'] ?? null;
+    $branch = $input['branch'] ?? 'main';
+    $job = $input['job'] ?? 'some';
+    /* $job_id = $input['job_id'] ?? null; */
+
+    // no null some of the vars
+    /* if (! $projectId || ! $job_id) { */
+    if (! $projectId ) {
+        http_response_code(400);
+        header('Content-Type: application/json');
+        echo json_encode(['error' => 'Missing required fields: project_id']);
+        exit();
+    }
+
+    return new ArifactContract(
+        project_id: $projectId,
+        branch: $branch,
+        job: $job,
+        /* job_id: $job_id, */
+    );
+}
+
 // --- LOGIC ---
 // ================================================================================
+
+function getRequestHeadersSafe()
+{
+    if (function_exists('getallheaders')) {
+        return getallheaders();
+    }
+
+    $headers = [];
+    foreach ($_SERVER as $key => $value) {
+        if (strpos($key, 'HTTP_') === 0) {
+            $name = str_replace(' ', '-', ucwords(strtolower(str_replace('_', ' ', substr($key, 5)))));
+            $headers[$name] = $value;
+        }
+    }
+
+    foreach (['CONTENT_TYPE', 'CONTENT_LENGTH', 'CONTENT_MD5', 'AUTHORIZATION'] as $key) {
+        if (isset($_SERVER[$key])) {
+            $name = str_replace(' ', '-', ucwords(strtolower(str_replace('_', ' ', $key))));
+            $headers[$name] = $_SERVER[$key];
+        }
+    }
+
+    return $headers;
+}
+
+function logRequestToFile($logFilePath, $rawBody)
+{
+    $decodedBody = json_decode($rawBody, true);
+    $entry = [
+        'timestamp' => date('c'),
+        'method' => $_SERVER['REQUEST_METHOD'] ?? 'CLI',
+        'uri' => $_SERVER['REQUEST_URI'] ?? null,
+        'remote_addr' => $_SERVER['REMOTE_ADDR'] ?? null,
+        'query_params' => $_GET,
+        'post_params' => $_POST,
+        'json_body' => json_last_error() === JSON_ERROR_NONE ? $decodedBody : null,
+        'raw_body' => $rawBody,
+        'headers' => getRequestHeadersSafe(),
+    ];
+
+    file_put_contents(
+        $logFilePath,
+        json_encode($entry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES).PHP_EOL.str_repeat('=', 80).PHP_EOL,
+        FILE_APPEND,
+    );
+}
 
 function validateSecurity()
 {
@@ -714,6 +917,254 @@ function executeDeploymentWithSingleShellProccess()
     runTasks($logFilePath, $logFilePathRaw, $logFIlePathHTML, $logFilePathFRaw, $tasks);
 }
 
+function executeArtifactDeployment(?string $projectId, string $job, string $branch = 'main')
+{
+    global $config, $statusFile;
+
+    if (empty($projectId)) {
+        http_response_code(400);
+        exit('Missing params');
+    }
+
+    // Check for concurrent deployment
+    if (file_exists($statusFile)) {
+        $current = json_decode(file_get_contents($statusFile), true);
+        if (isset($current['finished']) && $current['finished'] === true) {
+            unlink($statusFile);
+        } else {
+            http_response_code(409);
+            exit('Deployment already in progress.');
+        }
+    }
+
+    // Generate log filenames immediately so we can log the download/extract phases
+    $logFileName = 'artifact_deploy_'.date('Ymd_His').'.log';
+    $logFilePath = $config['logs_path'].'/'.$logFileName;
+    $logFilePathRaw = $config['logs_path'].'/'.$logFileName.'.rlog';
+    $logFilePathHTML = $config['logs_path'].'/'.$logFileName.'.html';
+    $logFilePathFRaw = $config['logs_path'].'/'.$logFileName.'.fraw';
+
+    $startTime = microtime(true);
+    $host = defined('CLI_HOST') ? CLI_HOST : $_SERVER['HTTP_HOST'] ?? 'localhost';
+
+    // Lock the status file IMMEDIATELY to prevent race conditions during download/extract.
+    // Any concurrent request will see this and get a 409 before the download even starts.
+    file_put_contents($statusFile, json_encode([
+        'running' => true,
+        'finished' => false,
+        'task' => 'Downloading artifact...',
+        'index' => 0,
+        'total' => 0,
+        'pid' => getmypid(),
+        'log_file' => $logFileName,
+        'start' => $startTime,
+    ]));
+
+    // Initialize fraw log for pre-run phases (download, extract)
+    $preLog = 'START: '.date('Y-m-d H:i:s')."\n";
+    $preLogRaw = 'START: '.date('Y-m-d H:i:s')."\n";
+    file_put_contents($logFilePathFRaw, $preLog);
+
+    // Helper: write a line to all pre-run logs
+    $logLine = function (string $line, string $level = 'info') use (&$preLog, &$preLogRaw, $logFilePathFRaw) {
+        $ts = date('Y-m-d H:i:s');
+        $preLog .= "[PRE][$level] $line\n";
+        $preLogRaw .= "[$ts][$level] $line\n";
+        file_put_contents($logFilePathFRaw, "[PRE][$level] $line\n", FILE_APPEND);
+    };
+
+    // Helper: fail during pre-run phase — writes logs, updates status, notifies, exits
+    $failArtifact = function (string $msg, string $task = '') use (
+        &$preLog,
+        &$preLogRaw,
+        $logFilePath,
+        $logFilePathRaw,
+        $logFilePathHTML,
+        $logFilePathFRaw,
+        $statusFile,
+        $host,
+        $startTime,
+        $logFileName,
+    ) {
+        $duration = round(microtime(true) - $startTime, 2);
+        $protocol = isset($_SERVER['HTTPS']) ? 'https://' : 'http://';
+        $logId = pathinfo($logFilePath, PATHINFO_FILENAME);
+        $logUrl = "$protocol{$host}/log/rview/{$logId}";
+
+        file_put_contents($logFilePath, $preLog."\nERROR: $msg\nEND. Duration: {$duration}s");
+        file_put_contents($logFilePathRaw, $preLogRaw."\nERROR: $msg\nEND. Duration: {$duration}s");
+        file_put_contents($logFilePathFRaw, "[PRE][error] $msg\nEND. Duration: {$duration}s\n", FILE_APPEND);
+        file_put_contents($logFilePathHTML, createLogHtml(
+            'Artifact Deploy Log',
+            '<h1>Artifact Deploy Log</h1><p style="color:red;font-weight:bold;">ERROR: '
+            .htmlspecialchars($msg)
+            .'</p><p>Duration: '
+            .$duration
+            .'s</p>',
+        ));
+        file_put_contents($statusFile, json_encode([
+            'running' => false,
+            'finished' => true,
+            'success' => false,
+            'task' => "FAILED: $msg",
+            'duration' => $duration,
+            'log_file' => $logFileName,
+        ]));
+        sendTelegram(buildReport($host, false, $duration, $logUrl, $task ?: 'Artifact Deploy', $msg));
+        http_response_code(500);
+        exit($msg);
+    };
+
+    // Validate required config
+    $gitlabToken = $config['gitlab_token'];
+    if (empty($gitlabToken)) {
+        $logLine('GITLAB_TOKEN not configured', 'error');
+        $failArtifact('GITLAB_TOKEN not configured');
+    }
+
+    $instructionsFile = $config['artifact_instructions'];
+    if (! file_exists($instructionsFile)) {
+        $msg = "Artifact instructions file not found: $instructionsFile";
+        $logLine($msg, 'error');
+        $failArtifact($msg);
+    }
+
+    // Prepare artifact deploy directory
+    $deployDir = $config['artifact_deploy_dir'];
+    if (! is_dir($deployDir)) {
+        mkdir($deployDir, 0755, true);
+    }
+
+    // Download artifact from GitLab
+    $artifactFile = $deployDir.'/artifact.zip';
+    $gitlabBase = rtrim($config['gitlab_base_url'], '/');
+    $artifactUrl = "{$gitlabBase}/api/v4/projects/{$projectId}/jobs/artifacts/{$branch}/download?job={$job}";
+    /* $artifactUrl = "{$gitlabBase}/api/v4/projects/{$projectId}/jobs/{$job_id}/artifacts"; */
+
+    $logLine("Downloading artifact — project: $projectId | branch: $branch | job: $job");
+    $logLine("URL: $artifactUrl");
+
+    $fp = fopen($artifactFile, 'w');
+    if (! $fp) {
+        $msg = "Cannot write artifact file to: $artifactFile";
+        $logLine($msg, 'error');
+        $failArtifact($msg);
+    }
+
+    $ch = curl_init($artifactUrl);
+    curl_setopt_array($ch, [
+        CURLOPT_FILE => $fp,
+        CURLOPT_HTTPHEADER => ["PRIVATE-TOKEN: $gitlabToken"],
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_FAILONERROR => true,
+    ]);
+    $result = curl_exec($ch);
+    $curlError = curl_error($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    // DEPRECATED:
+    // curl_close($ch);
+    fclose($fp);
+
+    if ($result === false) {
+        $msg = "Artifact download failed (HTTP $httpCode): $curlError";
+        $logLine($msg, 'error');
+        $failArtifact($msg, 'Download');
+    }
+
+    $fileSize = round(filesize($artifactFile) / 1024, 1);
+    $logLine("Artifact downloaded successfully — {$fileSize} KB (HTTP $httpCode)");
+
+    // Update status: extracting
+    file_put_contents($statusFile, json_encode([
+        'running' => true,
+        'finished' => false,
+        'task' => 'Extracting artifact...',
+        'index' => 0,
+        'total' => 0,
+        'pid' => getmypid(),
+        'log_file' => $logFileName,
+        'start' => $startTime,
+    ]));
+
+    // Extract artifact
+    $extractDir = $deployDir.'/extracted';
+    if (is_dir($extractDir)) {
+        exec('rm -rf '.escapeshellarg($extractDir));
+    }
+    mkdir($extractDir, 0755, true);
+
+    $logLine("Extracting artifact to: $extractDir");
+
+    if (! extractArtifact($artifactFile, $extractDir)) {
+        $logLine('Failed to extract artifact', 'error');
+        $failArtifact('Failed to extract artifact', 'Extract');
+    }
+
+    $logLine('Artifact extracted successfully');
+
+    // Validate and load instructions
+    $jsonContent = file_get_contents($instructionsFile);
+    $tasks = json_decode($jsonContent, true);
+    if (is_null($tasks)) {
+        $msg = 'Invalid JSON in artifact instructions file: '.json_last_error_msg();
+        $logLine($msg, 'error');
+        $failArtifact($msg);
+    }
+
+    $errInstructions = validateInstructions($tasks);
+    if ($errInstructions !== true) {
+        $msg = "Invalid artifact task instructions: $errInstructions";
+        $logLine($msg, 'error');
+        $failArtifact($msg);
+    }
+
+    $logLine('Instructions validated — '.count($tasks).' task(s) queued');
+    $logLine("Starting task execution in: $extractDir");
+
+    // Run tasks using the extracted directory as CWD.
+    // Pass pre-run log content so it is included in the final .log and .rlog files.
+    runTasks(
+        $logFilePath,
+        $logFilePathRaw,
+        $logFilePathHTML,
+        $logFilePathFRaw,
+        $tasks,
+        $extractDir,
+        $preLog,
+        $preLogRaw,
+    );
+}
+
+function extractArtifact(string $file, string $destDir): bool
+{
+    $ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+
+    // ZIP: use PHP's built-in ZipArchive
+    if ($ext === 'zip') {
+        $zip = new ZipArchive;
+        if ($zip->open($file) === true) {
+            $zip->extractTo($destDir);
+            $zip->close();
+
+            return true;
+        }
+
+        return false;
+    }
+
+    // RAR: try unrar, then fall through to 7z
+    if ($ext === 'rar') {
+        exec('unrar x -o+ '.escapeshellarg($file).' '.escapeshellarg($destDir).'/', $out, $code);
+        if ($code === 0)
+            return true;
+    }
+
+    // Universal fallback: 7z (supports zip, rar, tar, gz, bz2, xz, etc.)
+    exec('7z x '.escapeshellarg($file).' -o'.escapeshellarg($destDir).' -y', $out, $code);
+
+    return $code === 0;
+}
+
 function createLogHtml($title, $bodyContent)
 {
     // @mago-format-ignore-next
@@ -763,13 +1214,15 @@ function runTasks(
     string $logFilePathHTML,
     string $logFilePathFRaw,
     array $tasks,
+    ?string $cwd = null,
+    string $logPrefix = '',
+    string $logRawPrefix = '',
 ) {
     global $statusFile, $config;
 
     // Setup log files
     $startTime = microtime(true);
 
-    //stes
     $totalTaks = count($tasks);
 
     // Init status file for live view
@@ -783,19 +1236,18 @@ function runTasks(
     ];
     updateLiveStatus($statusData);
 
-    // Change execution directory to project path
-    // NOTE: replazable for the action in proc_open
-    // chdir($config['project_path']);
-    $cmdsCWD = $config['project_path'];
+    $cmdsCWD = $cwd ?? $config['project_path'];
 
     // initialize the flags
     $success = true;
     $failedTask = '';
-    $fullLog = 'START: '.date('Y-m-d H:i:s')."\n";
-    $fullLogRaw = 'START: '.date('Y-m-d H:i:s')."\n";
-    $fullLogFRaw = 'START: '.date('Y-m-d H:i:s')."\n";
+    // Prepend any pre-run log content (e.g. from artifact download/extract phase)
+    $fullLog = $logPrefix.'START: '.date('Y-m-d H:i:s')."\n";
+    $fullLogRaw = $logRawPrefix.'START: '.date('Y-m-d H:i:s')."\n";
+    $fullLogFRaw = 'START TASKS: '.date('Y-m-d H:i:s')."\n";
     $htmlLogContent = '<h1>Deployment Log - Started at '.date('Y-m-d H:i:s')."</h1>\n";
-    file_put_contents($logFilePathFRaw, $fullLogFRaw);
+    // Use FILE_APPEND so pre-run content written to fraw is preserved
+    file_put_contents($logFilePathFRaw, $fullLogFRaw, FILE_APPEND);
 
     // Init the statusfile with pending status for all tasks
     $taskStatus = [];
@@ -1175,65 +1627,6 @@ function showSpecificLog($file, $type = 'text/plain')
         exit('Access Denied');
 }
 
-function renderValidationError($errorMessage)
-{ ?>
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
-        <title>Deployment Configuration Error</title>
-        <?= renderHeadImports() ?>
-    </head>
-    <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-300 p-8 font-mono text-sm transition-colors duration-200">
-        <div class="max-w-2xl mx-auto">
-            <div class="mt-8 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-500/50 p-8 rounded-lg shadow-lg dark:shadow-xl">
-                <div class="flex items-start gap-4">
-                    <div class="text-4xl">❌</div>
-                    <div class="flex-1">
-                        <h1 class="text-xl font-bold text-rose-900 dark:text-rose-100 mb-4">Deployment Configuration Error</h1>
-                        <p class="text-rose-800 dark:text-rose-200 mb-6 leading-relaxed">
-                            <?= htmlspecialchars($errorMessage, ENT_QUOTES, 'UTF-8') ?>
-                        </p>
-                        <div class="flex gap-3">
-                            <a href="/health" class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded text-sm font-bold transition">
-                                Back to Dashboard
-                            </a>
-                            <button onclick="window.history.back()" class="border border-rose-300 dark:border-rose-500/50 hover:bg-rose-50 dark:hover:bg-rose-900/30 text-rose-700 dark:text-rose-200 px-4 py-2 rounded text-sm font-bold transition">
-                                Go Back
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="mt-8 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-6 rounded-lg shadow-sm dark:shadow-xl">
-                <h2 class="text-slate-400 dark:text-slate-500 text-[10px] font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">Common Issues & Solutions</h2>
-                <div class="space-y-4 text-sm">
-                    <div>
-                        <h3 class="font-bold text-slate-700 dark:text-slate-300 mb-2">Missing YQ_PATH Variable</h3>
-                        <p class="text-slate-600 dark:text-slate-400 mb-2">If using a YAML file (deploy.yml), you need to set the YQ_PATH environment variable:</p>
-                        <pre class="bg-slate-50 dark:bg-slate-950 p-3 rounded text-xs border border-slate-200 dark:border-slate-800">YQ_PATH=/usr/bin/yq</pre>
-                    </div>
-                    <div>
-                        <h3 class="font-bold text-slate-700 dark:text-slate-300 mb-2">Invalid Instructions Format</h3>
-                        <p class="text-slate-600 dark:text-slate-400 mb-2">Check your deploy.json or deploy.yml file format:</p>
-                        <pre class="bg-slate-50 dark:bg-slate-950 p-3 rounded text-xs border border-slate-200 dark:border-slate-800">[
-  { "name": "Task 1", "run": "command" },
-  { "name": "Task 2", "run": "command" }
-]</pre>
-                    </div>
-                    <div>
-                        <h3 class="font-bold text-slate-700 dark:text-slate-300 mb-2">Missing Configuration</h3>
-                        <p class="text-slate-600 dark:text-slate-400">Ensure your .env file has INSTRUCTIONS_FILE and PROJECT_PATH set correctly.</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </body>
-    </html>
-    <?php }
-
 function showLastLog()
 {
     global $config;
@@ -1285,7 +1678,7 @@ function clearHistory()
             exit('Deployment already in progress.');
         }
     }
-    header('Location: /health?cleared=1');
+    header('Location: ' . dashboardUrl('cleared=1'));
 }
 
 function runTasksWithShell($tasks, &$fullLog, &$fullLogRaw, &$taskStatus)
@@ -1298,22 +1691,20 @@ function runTasksWithShell($tasks, &$fullLog, &$fullLogRaw, &$taskStatus)
 
     $process = proc_open('/bin/bash -s', $descriptors, $pipes);
 
-    if (!is_resource($process)) {
-        throw new RuntimeException("Unable to start shell");
+    if (! is_resource($process)) {
+        throw new RuntimeException('Unable to start shell');
     }
 
-
     foreach ($tasks as $index => $task) {
-
         $name = $task['name'] ?? 'Unnamed Task';
-        $cmd  = $task['run'];
+        $cmd = $task['run'];
 
         $taskStatus[$index]['status'] = 'running';
 
         $fullLog .= "\n[TASK]: $name\n[CMD]: $cmd\n";
-        $fullLogRaw .= "[" . date('Y-m-d H:i:s') . "] $cmd\n";
+        $fullLogRaw .= '['.date('Y-m-d H:i:s')."] $cmd\n";
 
-        fwrite($pipes[0], $cmd . "\n");
+        fwrite($pipes[0], $cmd."\n");
         fwrite($pipes[0], "echo __EXIT_CODE:$?\n");
 
         fflush($pipes[0]);
@@ -1323,22 +1714,22 @@ function runTasksWithShell($tasks, &$fullLog, &$fullLogRaw, &$taskStatus)
         $exitCode = 1;
 
         while (true) {
-
             $line = fgets($pipes[1]);
 
-            if ($line === false) break;
+            if ($line === false)
+                break;
 
-            if (str_starts_with($line, "__EXIT_CODE:")) {
-                $exitCode = (int) trim(str_replace("__EXIT_CODE:", "", $line));
+            if (str_starts_with($line, '__EXIT_CODE:')) {
+                $exitCode = (int) trim(str_replace('__EXIT_CODE:', '', $line));
                 break;
             }
 
             $stdout .= $line;
         }
 
-        echo "DONE";
+        echo 'DONE';
         $stderr .= stream_get_contents($pipes[2]);
-        echo "<br>";
+        echo '<br>';
 
         $fullLog .= "STDOUT: $stdout\nSTDERR: $stderr\nEXIT: $exitCode\n";
         $fullLogRaw .= $stdout;
@@ -1347,10 +1738,11 @@ function runTasksWithShell($tasks, &$fullLog, &$fullLogRaw, &$taskStatus)
             $taskStatus[$index]['status'] = 'success';
         } else {
             $taskStatus[$index]['status'] = 'failed';
+
             // return [$exitCode, $name, $stderr ?: $stdout];
             return [$exitCode, $name ?? '', $stderr ?: $stdout, $index ?? 0];
         }
-        echo "====";
+        echo '====';
     }
 
     fclose($pipes[0]);
@@ -1365,24 +1757,872 @@ function runTasksWithShell($tasks, &$fullLog, &$fullLogRaw, &$taskStatus)
 // --- VIEWS ---
 // ================================================================================
 
-function renderHeadImports()
+function renderValidationError($errorMessage)
+{ ?>
+    <!DOCTYPE html>
+    <html lang="en">
+
+    <head>
+        <meta charset="UTF-8">
+        <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+        <title>Deployment Configuration Error</title>
+        <?= renderHeadImports() ?>
+    </head>
+
+    <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-300 p-8 font-mono text-sm transition-colors duration-200">
+        <div class="max-w-2xl mx-auto">
+            <div class="mt-8 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-500/50 p-8 rounded-lg shadow-lg dark:shadow-xl">
+                <div class="flex items-start gap-4">
+                    <div class="text-4xl">❌</div>
+                    <div class="flex-1">
+                        <h1 class="text-xl font-bold text-rose-900 dark:text-rose-100 mb-4">Deployment Configuration Error</h1>
+                        <p class="text-rose-800 dark:text-rose-200 mb-6 leading-relaxed">
+                            <?= htmlspecialchars($errorMessage, ENT_QUOTES, 'UTF-8') ?>
+                        </p>
+                        <div class="flex gap-3">
+                            <a href="<?= dashboardUrl() ?>" class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded text-sm font-bold transition">
+                                Back to Dashboard
+                            </a>
+                            <button onclick="window.history.back()" class="border border-rose-300 dark:border-rose-500/50 hover:bg-rose-50 dark:hover:bg-rose-900/30 text-rose-700 dark:text-rose-200 px-4 py-2 rounded text-sm font-bold transition">
+                                Go Back
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-8 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-6 rounded-lg shadow-sm dark:shadow-xl">
+                <h2 class="text-slate-400 dark:text-slate-500 text-[10px] font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">Common Issues & Solutions</h2>
+                <div class="space-y-4 text-sm">
+                    <div>
+                        <h3 class="font-bold text-slate-700 dark:text-slate-300 mb-2">Missing YQ_PATH Variable</h3>
+                        <p class="text-slate-600 dark:text-slate-400 mb-2">If using a YAML file (deploy.yml), you need to set the YQ_PATH environment variable:</p>
+                        <pre class="bg-slate-50 dark:bg-slate-950 p-3 rounded text-xs border border-slate-200 dark:border-slate-800">YQ_PATH=/usr/bin/yq</pre>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-slate-700 dark:text-slate-300 mb-2">Invalid Instructions Format</h3>
+                        <p class="text-slate-600 dark:text-slate-400 mb-2">Check your deploy.json or deploy.yml file format:</p>
+                        <pre class="bg-slate-50 dark:bg-slate-950 p-3 rounded text-xs border border-slate-200 dark:border-slate-800">[
+  { "name": "Task 1", "run": "command" },
+  { "name": "Task 2", "run": "command" }
+]</pre>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-slate-700 dark:text-slate-300 mb-2">Missing Configuration</h3>
+                        <p class="text-slate-600 dark:text-slate-400">Ensure your .env file has INSTRUCTIONS_FILE and PROJECT_PATH set correctly.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </body>
+
+    </html>
+<?php
+}
+
+function renderHealth2View()
 {
-    return <<<HTML
-        <style>
-            @font-face {
-                font-family: 'JetBrains Mono Variable';
-                font-style: normal;
-                font-display: swap;
-                font-weight: 100 800;
-                src: url(https://cdn.jsdelivr.net/fontsource/fonts/jetbrains-mono:vf@latest/latin-wght-normal.woff2) format('woff2-variations');
+    global $config, $statusFile, $defaults;
+
+    $serverDomain = $_SERVER['HTTP_HOST'] ?? 'Unknown Domain';
+    $phpVersion = PHP_VERSION;
+    $instructionExists = file_exists($config['instructions']);
+    $artifactInstructionExists = file_exists($config['artifact_instructions']);
+    $logs = glob($config['logs_path'].'/*.log') ?: [];
+    usort($logs, fn ($a, $b) => filemtime($b) - filemtime($a));
+    $lastLogs = array_slice($logs, 0, 10);
+
+    $statusData = file_exists($statusFile) ? json_decode(file_get_contents($statusFile), true) : null;
+    $isActuallyRunning = $statusData && (! isset($statusData['finished']) || ! $statusData['finished']);
+    $baseUrl = appBaseUrl();
+    $logsCount = count($logs);
+    $lastLogStatus = $logs ? resolveLogExecutionStatus($logs[0]) : null;
+    $lastLogAt = $logs ? date('Y-m-d H:i', filemtime($logs[0])) : 'Never';
+
+    // Determine overall health
+    $criticalIssues = [];
+    if (empty($config['project_path'])) $criticalIssues[] = 'Project path not configured';
+    if (! $instructionExists) $criticalIssues[] = 'Instructions file missing';
+
+    // System config checks - show OK or ?? only
+    $systemChecks = [
+        ['label' => 'Project Path', 'ok' => ! empty($config['project_path'])],
+        ['label' => 'Instructions', 'ok' => $instructionExists, 'detail' => basename($config['instructions'])],
+        ['label' => 'Logs Path', 'ok' => true], // Always has default
+        ['label' => 'Telegram', 'ok' => ! empty($config['bot_token'])],
+        ['label' => 'Security', 'ok' => ! empty($config['secure_token'])],
+    ];
+
+    // Artifact config checks
+    $artifactChecks = [
+        ['label' => 'GitLab Token', 'ok' => ! empty($config['gitlab_token'])],
+        ['label' => 'Instructions', 'ok' => $artifactInstructionExists, 'detail' => basename($config['artifact_instructions'])],
+        ['label' => 'Deploy Dir', 'ok' => ! empty($config['artifact_deploy_dir'])],
+        ['label' => 'GitLab URL', 'ok' => ! empty($config['gitlab_base_url'])],
+    ];
+
+    ?>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+        <title>System Health — Deployer</title>
+        <?= renderHeadImports() ?>
+        <script>
+            <?php if ($isActuallyRunning): ?>
+                setInterval(async () => {
+                    try {
+                        const res = await fetch('/status/check');
+                        const data = await res.json();
+                        if (data.finished) window.location.reload();
+                    } catch (e) {}
+                }, 2000);
+            <?php endif; ?>
+
+            function copy(btn, text) {
+                navigator.clipboard?.writeText(text).then(() => {
+                    const original = btn.textContent;
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('bg-emerald-100', 'text-emerald-700', 'dark:bg-emerald-500/20', 'dark:text-emerald-400');
+                    setTimeout(() => {
+                        btn.textContent = original;
+                        btn.classList.remove('bg-emerald-100', 'text-emerald-700', 'dark:bg-emerald-500/20', 'dark:text-emerald-400');
+                    }, 1500);
+                });
             }
-        </style>
-        <style type="text/tailwindcss">
-            @theme {
-                --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        </script>
+    </head>
+    <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-400 font-mono text-sm min-h-screen transition-colors duration-200 p-8">
+        <!-- <div class="max-w-6xl mx-auto p-4 md:p-6 lg:p-8"> -->
+        <div class="max-w-6xl mx-auto">
+
+            <!-- Header -->
+            <header class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8 pb-6 border-b border-slate-200 dark:border-slate-800">
+                <div>
+                    <h1 class="text-slate-900 dark:text-white font-bold text-xl tracking-tighter uppercase">Simple PHP <span class="text-[#a855f7]">Deployer</span></h1>
+                    <div class="flex items-center gap-3 mt-2">
+                        <?php if ($isActuallyRunning): ?>
+                            <span class="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">
+                                <span class="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+                                Running
+                            </span>
+                        <?php elseif ($lastLogStatus === true): ?>
+                            <span class="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                                <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                                Healthy
+                            </span>
+                        <?php elseif ($lastLogStatus === false): ?>
+                            <span class="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400">
+                                <span class="w-2 h-2 rounded-full bg-rose-500"></span>
+                                Failed
+                            </span>
+                        <?php else: ?>
+                            <span class="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-500">
+                                <span class="w-2 h-2 rounded-full bg-slate-400"></span>
+                                Ready
+                            </span>
+                        <?php endif; ?>
+                        <span class="text-xs text-slate-400 dark:text-slate-600">·</span>
+                        <span class="text-xs text-slate-500 dark:text-slate-500"><?= htmlspecialchars($serverDomain) ?></span>
+                    </div>
+                </div>
+                <a href="/alllogs" class="text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-bold uppercase tracking-tighter">View all logs →</a>
+            </header>
+
+            <!-- Critical Issues -->
+            <?php if (! empty($criticalIssues)): ?>
+                <div class="mb-6 space-y-2">
+                    <?php foreach ($criticalIssues as $issue): ?>
+                        <div class="flex items-center gap-3 px-4 py-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-500/20 text-rose-700 dark:text-rose-400 text-xs">
+                            <span class="font-bold">!</span>
+                            <?= htmlspecialchars($issue) ?>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
+
+            <!-- Main Grid -->
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+                <!-- Left Column: Config Checks & Stats -->
+                <div class="lg:col-span-3 space-y-6">
+
+                    <!-- System Config -->
+                    <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl overflow-hidden">
+                        <div class="px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
+                            <h2 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-500">System Config</h2>
+                        </div>
+                        <div class="divide-y divide-slate-100 dark:divide-slate-800">
+                            <?php foreach ($systemChecks as $check): ?>
+                                <div class="px-4 py-2 flex items-center justify-between">
+                                    <span class="text-[11px] text-slate-600 dark:text-slate-400"><?= htmlspecialchars($check['label']) ?></span>
+                                    <div class="flex items-center gap-2">
+                                        <?php if (isset($check['detail'])): ?>
+                                            <span class="text-[10px] text-slate-400 dark:text-slate-600"><?= htmlspecialchars($check['detail']) ?></span>
+                                        <?php endif; ?>
+                                        <span class="text-[10px] font-bold <?= $check['ok'] ? 'text-emerald-600 dark:text-emerald-500' : 'text-rose-600 dark:text-rose-500' ?>">
+                                            <?= $check['ok'] ? 'OK' : '??' ?>
+                                        </span>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+
+                    <!-- Artifact Config -->
+                    <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl overflow-hidden">
+                        <div class="px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
+                            <h2 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-500">Artifact Config</h2>
+                        </div>
+                        <div class="divide-y divide-slate-100 dark:divide-slate-800">
+                            <?php foreach ($artifactChecks as $check): ?>
+                                <div class="px-4 py-2 flex items-center justify-between">
+                                    <span class="text-[11px] text-slate-600 dark:text-slate-400"><?= htmlspecialchars($check['label']) ?></span>
+                                    <div class="flex items-center gap-2">
+                                        <?php if (isset($check['detail'])): ?>
+                                            <span class="text-[10px] text-slate-400 dark:text-slate-600"><?= htmlspecialchars($check['detail']) ?></span>
+                                        <?php endif; ?>
+                                        <span class="text-[10px] font-bold <?= $check['ok'] ? 'text-emerald-600 dark:text-emerald-500' : 'text-rose-600 dark:text-rose-500' ?>">
+                                            <?= $check['ok'] ? 'OK' : '??' ?>
+                                        </span>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+
+                    <!-- Stats -->
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl p-4">
+                            <div class="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1">Logs</div>
+                            <div class="text-xl text-slate-900 dark:text-white font-bold"><?= $logsCount ?></div>
+                        </div>
+                        <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl p-4">
+                            <div class="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1">Last</div>
+                            <div class="text-xl font-bold <?= $lastLogStatus === true ? 'text-emerald-600 dark:text-emerald-400' : ($lastLogStatus === false ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400 dark:text-slate-500') ?>">
+                                <?= $lastLogStatus === true ? 'OK' : ($lastLogStatus === false ? 'FAIL' : '-') ?>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- Middle Column: Actions -->
+                <div class="lg:col-span-3 space-y-6">
+
+                    <!-- Actions -->
+                    <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl overflow-hidden">
+                        <div class="px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
+                            <h2 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-500">Actions</h2>
+                        </div>
+                        <div class="p-4 space-y-2">
+                            <?php if ($isActuallyRunning): ?>
+                                <a href="/status/live" class="flex items-center justify-center gap-2 w-full bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 text-white py-2.5 rounded text-xs font-bold uppercase tracking-wider transition animate-pulse">
+                                    <span class="w-2 h-2 bg-white rounded-full animate-ping"></span>
+                                    View Process
+                                </a>
+                            <?php else: ?>
+                                <a href="/webhook/deploy?manual=1" onclick="return confirm('Start deployment?')" class="block w-full text-center bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 py-2.5 rounded text-xs font-bold uppercase tracking-wider hover:opacity-90 transition">
+                                    Deploy
+                                </a>
+                            <?php endif; ?>
+
+                            <div class="pt-2 space-y-1">
+                                <?php if (env('MODE', 'production') !== 'production'): ?>
+                                    <a href="/debugdeploy" target="_blank" onclick="return confirm('Debug deployment?')" class="flex items-center justify-center w-full py-2 rounded text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30 hover:bg-amber-50 dark:hover:bg-amber-500/10 transition">
+                                        Debug
+                                    </a>
+                                <?php endif; ?>
+
+                                <?php if (isset($statusData['finished'])): ?>
+                                    <a href="/status/live" class="flex items-center justify-center w-full py-2 rounded text-[11px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 transition">
+                                        Last Result
+                                    </a>
+                                <?php endif; ?>
+
+                                <a href="/test-notify?return=health2" class="flex items-center justify-center w-full py-2 rounded text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition">
+                                    Test Notify
+                                </a>
+
+                                <a href="/clear-history" onclick="return confirm('Clear all logs?')" class="flex items-center justify-center w-full py-2 rounded text-[11px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-500/30 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition">
+                                    Clear History
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- Right Column: Webhooks & Logs -->
+                <div class="lg:col-span-6 space-y-6">
+
+                    <!-- Webhooks -->
+                    <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl overflow-hidden">
+                        <div class="px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 flex items-center justify-between">
+                            <h2 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-500">Webhook Endpoints</h2>
+                            <span class="text-[10px] font-bold text-slate-400 dark:text-slate-600 uppercase"><?= htmlspecialchars($config['webhook_method']) ?></span>
+                        </div>
+                        <div class="divide-y divide-slate-100 dark:divide-slate-800">
+                            <div class="px-4 py-3">
+                                <div class="flex items-center gap-2 mb-1">
+                                    <span class="text-xs font-bold text-slate-900 dark:text-white">Standard Deploy</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <code class="flex-1 text-[11px] text-slate-500 dark:text-slate-500 font-mono truncate bg-slate-100 dark:bg-slate-950 px-2 py-1 rounded"><?= htmlspecialchars($baseUrl) ?>/webhook/deploy</code>
+                                    <button onclick="copy(this, '<?= htmlspecialchars($baseUrl) ?>/webhook/deploy')" class="shrink-0 px-3 py-1 rounded text-[10px] font-bold uppercase text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition">Copy</button>
+                                </div>
+                            </div>
+                            <div class="px-4 py-3">
+                                <div class="flex items-center gap-2 mb-1">
+                                    <span class="text-xs font-bold text-slate-900 dark:text-white">Artifact Deploy</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <code class="flex-1 text-[11px] text-slate-500 dark:text-slate-500 font-mono truncate bg-slate-100 dark:bg-slate-950 px-2 py-1 rounded"><?= htmlspecialchars($baseUrl) ?>/webhook/artifact-deploy</code>
+                                    <button onclick="copy(this, '<?= htmlspecialchars($baseUrl) ?>/webhook/artifact-deploy')" class="shrink-0 px-3 py-1 rounded text-[10px] font-bold uppercase text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition">Copy</button>
+                                </div>
+                            </div>
+                        </div>
+                        <?php if (! empty($config['secure_token'])): ?>
+                            <div class="px-4 py-2 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/30">
+                                <span class="text-[10px] text-slate-500 dark:text-slate-500">Auth: <code class="text-slate-600 dark:text-slate-400 font-mono">X-Deploy-Token</code> header required</span>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+
+                    <!-- Recent Logs -->
+                    <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl overflow-hidden">
+                        <div class="px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 flex items-center justify-between">
+                            <h2 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-500">Recent Executions</h2>
+                            <span class="text-[10px] text-slate-400 dark:text-slate-600">Last 10</span>
+                        </div>
+                        <?php if (empty($lastLogs)): ?>
+                            <div class="p-8 text-center text-slate-400 dark:text-slate-600 italic text-sm">No executions yet</div>
+                        <?php else: ?>
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-left border-collapse">
+                                    <thead>
+                                        <tr class="bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 text-[10px] uppercase">
+                                            <th class="px-4 py-2 font-bold border-b border-slate-100 dark:border-slate-800">Status</th>
+                                            <th class="px-4 py-2 font-bold border-b border-slate-100 dark:border-slate-800">Log File</th>
+                                            <th class="px-4 py-2 font-bold border-b border-slate-100 dark:border-slate-800 hidden sm:table-cell">Date</th>
+                                            <th class="px-4 py-2 font-bold border-b border-slate-100 dark:border-slate-800 text-right">Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                                        <?php foreach ($lastLogs as $logPath):
+                                            $fn = basename($logPath);
+                                            $logId = pathinfo($fn, PATHINFO_FILENAME);
+                                            $isOk = resolveLogExecutionStatus($logPath);
+                                            $size = filesize($logPath);
+                                            $date = date('M j, H:i', filemtime($logPath));
+                                        ?>
+                                            <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition">
+                                                <td class="px-4 py-2.5">
+                                                    <?php if ($isOk === true): ?>
+                                                        <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-[10px] font-bold">
+                                                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                                            OK
+                                                        </span>
+                                                    <?php elseif ($isOk === false): ?>
+                                                        <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-rose-100 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 text-[10px] font-bold">
+                                                            <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                                                            FAIL
+                                                        </span>
+                                                    <?php else: ?>
+                                                        <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-500/10 text-slate-600 dark:text-slate-400 text-[10px] font-bold">
+                                                            <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                                                            ???
+                                                        </span>
+                                                    <?php endif; ?>
+                                                </td>
+                                                <td class="px-4 py-2.5">
+                                                    <div class="text-xs font-mono text-slate-900 dark:text-white truncate max-w-[120px] sm:max-w-[180px]"><?= htmlspecialchars($fn) ?></div>
+                                                    <div class="sm:hidden text-[10px] text-slate-400 dark:text-slate-600"><?= htmlspecialchars($date) ?></div>
+                                                </td>
+                                                <td class="px-4 py-2.5 text-slate-500 dark:text-slate-500 text-xs hidden sm:table-cell"><?= htmlspecialchars($date) ?></td>
+                                                <td class="px-4 py-2.5 text-right">
+                                                    <a href="/log/rview/<?= urlencode($logId) ?>" target="_blank" class="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wide bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition">
+                                                        Open
+                                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+                                                    </a>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+
+                </div>
+            </div>
+
+        </div>
+    </body>
+    </html>
+    <?php
+}
+
+function renderHealth1View()
+{
+    global $config, $statusFile, $defaults;
+
+    $serverIp = $_SERVER['SERVER_ADDR'] ?? 'Local';
+    $serverDomain = $_SERVER['HTTP_HOST'] ?? 'Unknown Domain';
+    $phpVersion = PHP_VERSION;
+    $instructionExists = file_exists($config['instructions']);
+    $artifactInstructionExists = file_exists($config['artifact_instructions']);
+    $logs = glob($config['logs_path'].'/*.log') ?: [];
+    usort($logs, fn ($a, $b) => filemtime($b) - filemtime($a));
+    $lastLogs = array_slice($logs, 0, 3);
+
+    $statusData = file_exists($statusFile) ? json_decode(file_get_contents($statusFile), true) : null;
+    $isActuallyRunning = $statusData && (! isset($statusData['finished']) || ! $statusData['finished']);
+    $baseUrl = appBaseUrl();
+    $deployWebhookUrl = $baseUrl.'/webhook/deploy';
+    $artifactWebhookUrl = $baseUrl.'/webhook/artifact-deploy';
+    $logsCount = count($logs);
+    $lastLogStatus = $logs ? resolveLogExecutionStatus($logs[0]) : null;
+    $lastLogAt = $logs ? date('Y-m-d H:i:s', filemtime($logs[0])) : 'No runs yet';
+    $systemReady = $instructionExists && ! empty($config['project_path']) && ! empty($config['logs_path']);
+    $artifactReady =
+        $artifactInstructionExists
+        && ! empty($config['gitlab_token'])
+        && ! empty($config['artifact_deploy_dir'])
+        && ! empty($config['gitlab_base_url']);
+    $securityEnabled = ! empty($config['secure_token']);
+    $headlineStatusLabel = $isActuallyRunning
+        ? 'Deployment running'
+        : ($lastLogStatus === true
+            ? 'System healthy'
+            : ($lastLogStatus === false ? 'Needs attention' : 'Ready for deploy'));
+    $headlineStatusClasses = $isActuallyRunning
+        ? 'border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-300'
+        : ($lastLogStatus === true
+            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300'
+            : ($lastLogStatus === false
+                ? 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-300'
+                : 'border-slate-300 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300'));
+
+    ?>
+    <!DOCTYPE html>
+    <html lang="en">
+
+    <head>
+        <meta charset="UTF-8">
+        <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+        <title>System Health - Deployer</title>
+        <?= renderHeadImports() ?>
+        <script>
+            <?php if ($isActuallyRunning): ?>
+                const checkStatus = setInterval(async () => {
+                    try {
+                        const response = await fetch('/status/check');
+                        const data = await response.json();
+
+                        if (data.finished === true) {
+                            clearInterval(checkStatus);
+                            window.location.reload();
+                        }
+                    } catch (e) {
+                        console.error("Error checking status:", e);
+                    }
+                }, 2000); // Consulta cada 2 segundos
+            <?php endif; ?>
+
+            async function copyToClipboard(button, value) {
+                const originalText = button.dataset.originalText || button.textContent;
+
+                try {
+                    if (navigator.clipboard && window.isSecureContext) {
+                        await navigator.clipboard.writeText(value);
+                    } else {
+                        const input = document.createElement('textarea');
+                        input.value = value;
+                        input.setAttribute('readonly', '');
+                        input.style.position = 'absolute';
+                        input.style.left = '-9999px';
+                        document.body.appendChild(input);
+                        input.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(input);
+                    }
+
+                    button.dataset.originalText = originalText;
+                    button.textContent = 'Copied';
+                    button.classList.add('bg-emerald-500', 'text-white', 'border-emerald-500');
+
+                    setTimeout(() => {
+                        button.textContent = originalText;
+                        button.classList.remove('bg-emerald-500', 'text-white', 'border-emerald-500');
+                    }, 1600);
+                } catch (error) {
+                    window.prompt('Copy this value:', value);
+                }
             }
-        </style>
-        HTML;
+        </script>
+    </head>
+
+    <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-300 p-6 font-mono text-sm transition-colors duration-200">
+        <div class="max-w-6xl mx-auto space-y-6">
+            <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl overflow-hidden">
+                <div class="px-5 py-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                        <div class="flex flex-wrap items-center gap-3">
+                            <h1 class="text-slate-900 dark:text-white font-bold text-xl tracking-tighter uppercase">Simple PHP <span class="text-[#a855f7]">Deployer</span></h1>
+                            <span class="inline-flex items-center gap-2 border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] <?= $headlineStatusClasses ?>">
+                                <span class="inline-flex h-2 w-2 rounded-full <?= $isActuallyRunning
+                                    ? 'bg-blue-500 animate-pulse'
+                                    : ($lastLogStatus === true
+                                        ? 'bg-emerald-500'
+                                        : ($lastLogStatus === false ? 'bg-amber-500' : 'bg-slate-400 dark:bg-slate-500')) ?>"></span>
+                                <?= htmlspecialchars($headlineStatusLabel) ?>
+                            </span>
+                        </div>
+                        <p class="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                            Dashboard operativo para ejecuciones manuales, webhooks y revisi&oacute;n r&aacute;pida de actividad reciente.
+                        </p>
+                        <p class="mt-3 text-[11px] text-slate-400 dark:text-slate-500">
+                            Host: <span class="text-slate-600 dark:text-slate-400"><?= htmlspecialchars(
+                                $serverDomain,
+                            ) ?></span>
+                            &middot; IP: <span class="text-slate-600 dark:text-slate-400"><?= htmlspecialchars(
+                                $serverIp,
+                            ) ?></span>
+                            &middot; PHP: <span class="text-slate-600 dark:text-slate-400"><?= htmlspecialchars(
+                                $phpVersion,
+                            ) ?></span>
+                            &middot; Webhook: <span class="text-slate-600 dark:text-slate-400"><?= htmlspecialchars(
+                                $config['webhook_method'],
+                            ) ?></span>
+                        </p>
+                    </div>
+
+                    <?php if ($isActuallyRunning): ?>
+                        <a href="/status/live" class="bg-blue-600 text-white px-3 py-1 text-xs font-bold rounded shadow-lg shadow-blue-500/20 animate-pulse">PROCESS RUNNING</a>
+                    <?php endif; ?>
+                </div>
+
+                <div class="grid grid-cols-2 lg:grid-cols-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30">
+                    <div class="px-5 py-4 border-b lg:border-b-0 lg:border-r border-slate-100 dark:border-slate-800">
+                        <div class="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">Logs</div>
+                        <div class="mt-1 text-xl font-bold text-slate-900 dark:text-white"><?= $logsCount ?></div>
+                        <div class="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Historial total disponible</div>
+                    </div>
+                    <div class="px-5 py-4 border-b lg:border-b-0 lg:border-r border-slate-100 dark:border-slate-800">
+                        <div class="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">Last result</div>
+                        <div class="mt-1 text-sm font-bold <?= $lastLogStatus === true
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : ($lastLogStatus === false
+                                ? 'text-amber-600 dark:text-amber-400'
+                                : 'text-slate-900 dark:text-white') ?>">
+                            <?= $lastLogStatus === true
+                                ? 'Success'
+                                : ($lastLogStatus === false ? 'Failed' : 'No executions') ?>
+                        </div>
+                        <div class="mt-1 text-[11px] text-slate-500 dark:text-slate-400"><?= htmlspecialchars(
+                            $lastLogAt,
+                        ) ?></div>
+                    </div>
+                    <div class="px-5 py-4 lg:border-r border-slate-100 dark:border-slate-800">
+                        <div class="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">Deploy setup</div>
+                        <div class="mt-1 text-sm font-bold <?= $systemReady
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : 'text-rose-600 dark:text-rose-400' ?>">
+                            <?= $systemReady ? 'Ready' : 'Review required' ?>
+                        </div>
+                        <div class="mt-1 text-[11px] text-slate-500 dark:text-slate-400"><?= htmlspecialchars(
+                            basename($config['instructions']),
+                        ) ?></div>
+                    </div>
+                    <div class="px-5 py-4">
+                        <div class="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">Artifact setup</div>
+                        <div class="mt-1 text-sm font-bold <?= $artifactReady
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : 'text-rose-600 dark:text-rose-400' ?>">
+                            <?= $artifactReady ? 'Ready' : 'Review required' ?>
+                        </div>
+                        <div class="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                            <?= htmlspecialchars(basename($config['artifact_instructions'])) ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <?php if (! $instructionExists): ?>
+                <div class="bg-amber-100 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-500/50 p-4 rounded mb-8 text-amber-700 dark:text-amber-200">
+                    <span class="font-bold">ALERT:</span> Instruction file not found at "<?= $config['instructions'] ?>".
+                </div>
+            <?php endif; ?>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div class="lg:col-span-2 space-y-6">
+                <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl overflow-hidden">
+                        <div class="px-5 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <h2 class="text-slate-900 dark:text-white text-sm font-bold uppercase tracking-[0.2em]">Webhook endpoints</h2>
+                                <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">Copia las URLs p&uacute;blicas para integraciones de despliegue y artifacts.</p>
+                            </div>
+                            <?php if ($securityEnabled): ?>
+                                <div class="text-[11px] text-slate-500 dark:text-slate-400">
+                                    Auth: <span class="text-slate-800 dark:text-slate-100 font-bold">X-Deploy-Token</span>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+
+                        <div class="grid grid-cols-1 xl:grid-cols-2 gap-3 p-5">
+                            <?php
+                            $webhookCards = [
+                                [
+                                    'title' => 'Call Deploy',
+                                    'description' => 'Webhook principal para ejecutar el despliegue est&aacute;ndar.',
+                                    'url' => $deployWebhookUrl,
+                                    'path' => '/webhook/deploy',
+                                ],
+                                [
+                                    'title' => 'Artifact Deploy',
+                                    'description' => 'Webhook para descargar, extraer y desplegar artifacts de GitLab.',
+                                    'url' => $artifactWebhookUrl,
+                                    'path' => '/webhook/artifact-deploy',
+                                ],
+                            ];
+
+                            foreach ($webhookCards as $card): ?>
+                                <div class="border border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/20 p-4 space-y-3">
+                                    <div class="flex items-start justify-between gap-3">
+                                        <div>
+                                            <div class="text-sm font-bold text-slate-900 dark:text-white"><?= $card['title'] ?></div>
+                                            <p class="mt-1 text-xs text-slate-500 dark:text-slate-400"><?= $card['description'] ?></p>
+                                        </div>
+                                        <span class="border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-300"><?= htmlspecialchars(
+                                            $config['webhook_method'],
+                                        ) ?></span>
+                                    </div>
+
+                                    <div class="border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/60 p-3">
+                                        <div class="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">URL</div>
+                                        <div class="mt-2 break-all text-xs text-slate-700 dark:text-slate-200"><?= htmlspecialchars(
+                                            $card['url'],
+                                        ) ?></div>
+                                    </div>
+
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <button type="button"
+                                            onclick='copyToClipboard(this, <?= json_encode($card['url']) ?>)'
+                                            class="border border-slate-300 dark:border-slate-700 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+                                            Copy URL
+                                        </button>
+                                        <span class="text-[11px] text-slate-500 dark:text-slate-400">Path: <span class="text-slate-700 dark:text-slate-200"><?= htmlspecialchars(
+                                            $card['path'],
+                                        ) ?></span></span>
+                                    </div>
+
+                                    <?php if ($securityEnabled): ?>
+                                        <p class="text-[11px] text-slate-500 dark:text-slate-400">
+                                            Si el token est&aacute; activo, env&iacute;a <span class="font-bold text-slate-700 dark:text-slate-100">X-Deploy-Token</span>
+                                            o agrega <span class="font-bold text-slate-700 dark:text-slate-100">?token=...</span>.
+                                        </p>
+                                    <?php endif; ?>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+
+                    <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl overflow-hidden">
+                        <div class="px-5 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <h2 class="text-slate-900 dark:text-white text-sm font-bold uppercase tracking-[0.2em]">Recent execution history</h2>
+                                <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">Mostrando los 3 &uacute;ltimos logs. El historial completo sigue disponible en la vista dedicada.</p>
+                            </div>
+                            <a href="/alllogs" class="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold uppercase tracking-[0.18em] transition">View all logs</a>
+                        </div>
+
+                        <div class="p-5 space-y-3">
+                            <?php foreach ($lastLogs as $logPath):
+                                $fn = basename($logPath);
+                                $logName = pathinfo($fn, PATHINFO_FILENAME);
+                                $isOk = resolveLogExecutionStatus($logPath);
+                                $statusLabel = $isOk === true ? 'Success' : ($isOk === false ? 'Failed' : 'Unknown');
+                                $statusClasses = $isOk === true
+                                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                                    : ($isOk === false
+                                        ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
+                                        : 'bg-slate-500/10 text-slate-600 dark:text-slate-400');
+                                ?>
+                                <div class="border border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/20 p-4">
+                                    <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                                        <div class="space-y-1.5 min-w-0">
+                                            <div class="flex flex-wrap items-center gap-2">
+                                                <span class="px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] <?= $statusClasses ?>"><?= $statusLabel ?></span>
+                                                <span class="text-[11px] text-slate-500 dark:text-slate-400"><?= date(
+                                                    'Y-m-d H:i:s',
+                                                    filemtime($logPath),
+                                                ) ?></span>
+                                                <span class="text-[11px] text-slate-400 dark:text-slate-500">&bull;</span>
+                                                <span class="text-[11px] text-slate-500 dark:text-slate-400"><?= formatBytesLabel(
+                                                    filesize($logPath),
+                                                ) ?></span>
+                                            </div>
+                                            <div class="truncate text-sm font-bold text-slate-900 dark:text-white"><?= htmlspecialchars(
+                                                $fn,
+                                            ) ?></div>
+                                        </div>
+
+                                        <div class="flex flex-wrap items-center gap-2">
+                                            <a target="_blank" href="/log/rview/<?= urlencode($logName) ?>" class="border border-slate-300 dark:border-slate-700 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition">Open</a>
+                                            <a target="_blank" href="/log/bview/<?= urlencode($logName) ?>" class="border border-slate-300 dark:border-slate-700 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition">Raw</a>
+                                            <a target="_blank" href="/log/htmlview/<?= urlencode($logName) ?>" class="border border-slate-300 dark:border-slate-700 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition">HTML</a>
+                                        </div>
+                                    </div>
+                                </div>
+                            <?php endforeach;
+                            if (! $lastLogs): ?>
+                                <div class="border border-dashed border-slate-300 dark:border-slate-700 p-8 text-center text-sm text-slate-400 dark:text-slate-500">
+                                    No execution history found.
+                                </div>
+                            <?php endif; ?>
+                        </div>
+
+                        <div class="px-5 py-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30 flex flex-col gap-2 text-[11px] text-slate-500 dark:text-slate-400 sm:flex-row sm:items-center sm:justify-between">
+                            <span><?= $logsCount ?> log file(s) available</span>
+                            <span>Use <span class="font-bold text-slate-700 dark:text-slate-200">/alllogs</span> for full browsing.</span>
+                        </div>
+                    </div>
+
+                    <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-5 rounded-lg shadow-sm dark:shadow-xl">
+                        <h2 class="text-slate-900 dark:text-white text-sm font-bold mb-4 uppercase tracking-[0.2em]">Example deploy.json</h2>
+                        <pre class="text-[11px] text-indigo-700 dark:text-indigo-300 overflow-x-auto bg-slate-50 dark:bg-slate-950 p-4 border border-slate-100 dark:border-slate-800">[
+  { "name": "Git Pull", "run": "git pull origin main" },
+  { "name": "Install Dependencies", "run": "composer install --no-dev" },
+  { "name": "Optimize Cache", "run": "php artisan config:cache" }
+]</pre>
+                    </div>
+                </div>
+
+                <div class="space-y-5">
+                    <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-4 rounded-lg shadow-sm dark:shadow-xl">
+                        <h2 class="text-slate-900 dark:text-white text-sm font-bold mb-4 uppercase tracking-[0.2em]">Quick actions</h2>
+                        <div class="space-y-2">
+                            <?php if ($isActuallyRunning): ?>
+                                <a href="/status/live" class="flex items-center justify-center gap-2 w-full bg-blue-600 text-white py-3 rounded text-xs font-bold uppercase tracking-[0.18em] shadow-lg shadow-blue-500/20 animate-pulse">
+                                    <span class="inline-block w-2 h-2 bg-white rounded-full"></span>
+                                    Process running
+                                </a>
+                            <?php else: ?>
+                                <a href="/webhook/deploy?manual=1"
+                                    onclick="return confirm('Start deployment?')"
+                                    class="block w-full text-center bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 py-3 rounded text-xs font-bold hover:opacity-90 transition uppercase tracking-[0.18em]">Manual deploy</a>
+                            <?php endif; ?>
+
+                            <?php if (env('MODE', 'production') !== 'production'): ?>
+                                <a href="/debugdeploy"
+                                    target="_blank"
+                                    onclick="return confirm('Debug deployment?')"
+                                    class="block w-full text-center bg-amber-700 text-white py-3 rounded text-xs font-bold hover:bg-amber-600 transition uppercase tracking-[0.18em]">Debug deployment</a>
+                            <?php endif; ?>
+
+                            <?php if (isset($statusData['finished'])): ?>
+                                <a href="/status/live" class="block w-full text-center border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 py-3 rounded text-[11px] font-bold hover:bg-emerald-500/5 transition uppercase tracking-[0.18em]">
+                                    View last result
+                                </a>
+                            <?php endif; ?>
+
+                            <a href="/test-notify" class="block w-full text-center border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 py-3 rounded text-xs transition uppercase tracking-[0.18em]">Test notification</a>
+                            <a href="/alllogs" class="block w-full text-center border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 py-3 rounded text-xs transition uppercase tracking-[0.18em]">All logs</a>
+                            <a href="/clear-history" onclick="return confirm('Clear all logs?')" class="block w-full text-center text-rose-500 hover:text-rose-400 py-2 text-xs transition uppercase tracking-[0.18em]">Clear history</a>
+                        </div>
+                    </div>
+
+                    <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-5 rounded-lg shadow-sm dark:shadow-xl text-xs">
+                        <h2 class="text-slate-900 dark:text-white font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-[0.2em]">System config</h2>
+                        <div class="space-y-4 text-[11px]">
+                            <?php
+
+                            $vars = [
+                                'Path' => 'project_path',
+                                'Instructions file' => 'instructions',
+                                'Logs path' => 'logs_path',
+                                'Token' => 'bot_token',
+                                'Security' => 'secure_token',
+                            ];
+                            foreach ($vars as $label => $key):
+                                $isSet = ! empty($config[$key]);
+                                $isDefault =
+                                    isset($defaults[strtoupper($key)])
+                                    && $config[$key] === $defaults[strtoupper($key)][0];
+                                ?>
+                                <div class="flex flex-row items-center justify-between gap-4">
+                                    <div class="flex items-center gap-1 min-w-0">
+                                        <span class="text-slate-400 dark:text-slate-500 uppercase truncate"><?= $label ?></span>
+                                    </div>
+
+                                    <div>
+
+                                        <?php if ($isDefault): ?>
+                                            <span class="text-slate-400 dark:text-slate-600 font-bold tracking-tighter shrink-0">(DEFAULT)</span>
+                                        <?php endif; ?>
+                                        <span class="px-2 py-0.5 rounded font-bold shrink-0 <?= $isSet
+                                            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-500'
+                                            : 'bg-rose-500/10 text-rose-600 dark:text-rose-500' ?>">
+                                            <?= $isSet ? '0K' : '??' ?>
+                                        </span>
+
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+
+                    <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-5 rounded-lg shadow-sm dark:shadow-xl text-xs">
+                        <h2 class="text-slate-900 dark:text-white font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-[0.2em]">Artifact config</h2>
+                        <div class="space-y-3 text-[11px]">
+                            <?php
+
+                            $artifactVars = [
+                                ['label' => 'GitLab Token', 'isSet' => ! empty($config['gitlab_token'])],
+                                [
+                                    'label' => 'Instructions',
+                                    'isSet' => $artifactInstructionExists,
+                                    'value' => basename($config['artifact_instructions']),
+                                ],
+                                ['label' => 'Deploy Dir', 'isSet' => ! empty($config['artifact_deploy_dir'])],
+                                ['label' => 'GitLab URL', 'isSet' => ! empty($config['gitlab_base_url'])],
+                            ];
+                            foreach ($artifactVars as $av): ?>
+                                <div class="flex flex-row items-center justify-between gap-4">
+                                    <div class="text-slate-400 dark:text-slate-500 uppercase truncate"><?= $av['label'] ?>
+
+                                        <?php if (isset($av['value'])): ?>
+                                            <span class="text-slate-400 dark:text-slate-600 text-[10px] truncate max-w-[80px] lowercase"><?= htmlspecialchars(
+                                                $av['value'],
+                                            ) ?></span>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="flex items-center gap-1 shrink-0">
+                                        <span class="px-2 py-0.5 rounded font-bold <?= $av['isSet']
+                                            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-500'
+                                            : 'bg-rose-500/10 text-rose-600 dark:text-rose-500' ?>">
+                                            <?= $av['isSet'] ? '0K' : '??' ?>
+                                        </span>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                            <?php if (! $artifactInstructionExists): ?>
+                                <p class="text-rose-500 dark:text-rose-400 text-[10px] pt-1 break-all">
+                                    Not found: <?= htmlspecialchars($config['artifact_instructions']) ?>
+                                </p>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </body>
+
+    </html>
+<?php
 }
 
 function renderHealthView()
@@ -1393,6 +2633,7 @@ function renderHealthView()
     $serverDomain = $_SERVER['HTTP_HOST'] ?? 'Unknown Domain';
     $phpVersion = PHP_VERSION;
     $instructionExists = file_exists($config['instructions']);
+    $artifactInstructionExists = file_exists($config['artifact_instructions']);
     $logs = glob($config['logs_path'].'/*.log');
     usort($logs, fn ($a, $b) => filemtime($b) - filemtime($a));
     $lastLogs = array_slice($logs, 0, 5);
@@ -1403,11 +2644,12 @@ function renderHealthView()
     ?>
     <!DOCTYPE html>
     <html lang="en">
+
     <head>
         <meta charset="UTF-8">
         <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
         <title>System Health - Deployer</title>
-        <?= renderHeadImports() ?>      
+        <?= renderHeadImports() ?>
         <script>
             <?php if ($isActuallyRunning): ?>
                 const checkStatus = setInterval(async () => {
@@ -1426,14 +2668,15 @@ function renderHealthView()
             <?php endif; ?>
         </script>
     </head>
+
     <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-300 p-8 font-mono text-sm transition-colors duration-200">
         <div class="max-w-6xl mx-auto">
             <div class="flex justify-between items-start mb-10">
                 <div>
                     <h1 class="text-slate-900 dark:text-white font-bold text-xl tracking-tighter uppercase">SIMPLE PHP <span class="text-[#a855f7]">DEPLOYER</span></h1>
                     <p class="text-slate-400 dark:text-slate-500">
-                        Host: <span class="text-slate-600 dark:text-slate-400"><?= $serverDomain ?></span> | 
-                        IP: <span class="text-slate-600 dark:text-slate-400"><?= $serverIp ?></span> | 
+                        Host: <span class="text-slate-600 dark:text-slate-400"><?= $serverDomain ?></span> |
+                        IP: <span class="text-slate-600 dark:text-slate-400"><?= $serverIp ?></span> |
                         PHP: <span class="text-slate-600 dark:text-slate-400"><?= $phpVersion ?></span>
                     </p>
                 </div>
@@ -1490,6 +2733,48 @@ function renderHealthView()
                         </div>
                     </div>
 
+                    <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-5 rounded-lg shadow-sm dark:shadow-xl text-xs">
+                        <h2 class="text-slate-400 dark:text-slate-500 font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">Artifact Config</h2>
+                        <div class="space-y-3 text-[11px]">
+                            <?php
+
+                            $artifactVars = [
+                                ['label' => 'GitLab Token', 'isSet' => ! empty($config['gitlab_token'])],
+                                [
+                                    'label' => 'Instructions',
+                                    'isSet' => $artifactInstructionExists,
+                                    'value' => basename($config['artifact_instructions']),
+                                ],
+                                ['label' => 'Deploy Dir', 'isSet' => ! empty($config['artifact_deploy_dir'])],
+                                ['label' => 'GitLab URL', 'isSet' => ! empty($config['gitlab_base_url'])],
+                            ];
+                            foreach ($artifactVars as $av): ?>
+                                <div class="flex flex-row items-center justify-between gap-4">
+                                    <div class="text-slate-400 dark:text-slate-500 uppercase truncate"><?= $av['label'] ?>
+
+                                        <?php if (isset($av['value'])): ?>
+                                            <span class="text-slate-400 dark:text-slate-600 text-[10px] truncate max-w-[80px] lowercase"><?= htmlspecialchars(
+                                                $av['value'],
+                                            ) ?></span>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="flex items-center gap-1 shrink-0">
+                                        <span class="px-2 py-0.5 rounded font-bold <?= $av['isSet']
+                                            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-500'
+                                            : 'bg-rose-500/10 text-rose-600 dark:text-rose-500' ?>">
+                                            <?= $av['isSet'] ? '0K' : '??' ?>
+                                        </span>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                            <?php if (! $artifactInstructionExists): ?>
+                                <p class="text-rose-500 dark:text-rose-400 text-[10px] pt-1 break-all">
+                                    Not found: <?= htmlspecialchars($config['artifact_instructions']) ?>
+                                </p>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+
                     <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-5 rounded-lg shadow-sm dark:shadow-xl">
                         <h2 class="text-slate-400 dark:text-slate-500 text-[10px] font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">Quick Actions</h2>
                         <div class="space-y-2">
@@ -1500,14 +2785,14 @@ function renderHealthView()
                                     Running...
                                 </button>
                             <?php else: ?>
-                                <a href="/webhook/deploy?manual=1" 
+                                <a href="/webhook/deploy?manual=1"
                                     onclick="return confirm('Start deployment?')"
                                     class="block w-full text-center bg-slate-800 dark:bg-slate-800 text-white py-2 rounded text-xs font-bold hover:bg-slate-700 dark:hover:bg-slate-700 transition">MANUAL DEPLOY</a>
 
                             <?php endif; ?>
 
                             <?php if (env('MODE', 'production') !== 'production'): ?>
-                                <a href="/debugdeploy" 
+                                <a href="/debugdeploy"
                                     target="_blank"
                                     onclick="return confirm('Debug deployment?')"
                                     class="block w-full text-center bg-amber-800 dark:bg-amber-800 text-white py-2 rounded text-xs font-bold hover:bg-amber-700 dark:hover:bg-amber-700 transition">DEBUG DEPLOYMENT</a>
@@ -1571,14 +2856,16 @@ function renderHealthView()
                                     </tr>
                                 <?php endforeach;
                                 if (! $lastLogs): ?>
-                                    <tr><td colspan="3" class="p-10 text-center text-slate-400 italic">No execution history found.</td></tr>
+                                    <tr>
+                                        <td colspan="3" class="p-10 text-center text-slate-400 italic">No execution history found.</td>
+                                    </tr>
                                 <?php endif; ?>
                             </tbody>
                         </table>
                     </div>
                 </div>
             </div>
-            
+
             <div class="mt-8 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-6 rounded-lg shadow-sm dark:shadow-xl">
                 <h2 class="text-slate-400 dark:text-slate-500 text-[10px] font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">Example deploy.json</h2>
                 <pre class="text-[11px] text-indigo-700 dark:text-indigo-300 overflow-x-auto bg-slate-50 dark:bg-slate-950 p-4 rounded border border-slate-100 dark:border-transparent">
@@ -1590,9 +2877,76 @@ function renderHealthView()
             </div>
         </div>
     </body>
+
     </html>
-    <?php
+<?php
 }
+
+function renderHeadImports()
+{
+    return <<<HTML
+        <style>
+            @font-face {
+                font-family: 'JetBrains Mono Variable';
+                font-style: normal;
+                font-display: swap;
+                font-weight: 100 800;
+                src: url(https://cdn.jsdelivr.net/fontsource/fonts/jetbrains-mono:vf@latest/latin-wght-normal.woff2) format('woff2-variations');
+            }
+        </style>
+        <style type="text/tailwindcss">
+            @theme {
+                --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            }
+        </style>
+        HTML;
+}
+
+
+
+function appBaseUrl()
+{
+    $host = $_SERVER['HTTP_HOST'] ?? (defined('CLI_HOST') ? CLI_HOST : 'localhost');
+    $isHttps =
+        (! empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (isset($_SERVER['SERVER_PORT']) && (string) $_SERVER['SERVER_PORT'] === '443');
+
+    return ($isHttps ? 'https://' : 'http://').$host;
+}
+
+function resolveLogExecutionStatus($logPath)
+{
+    if (! file_exists($logPath)) {
+        return null;
+    }
+
+    $content = file_get_contents($logPath);
+    if ($content === false || trim($content) === '') {
+        return null;
+    }
+
+    $lines = preg_split('/\r\n|\r|\n/', trim($content));
+    $exitLine = $lines[count($lines) - 5] ?? end($lines) ?? '';
+    if ($exitLine === '') {
+        return null;
+    }
+
+    return str_contains($exitLine, 'EXIT: 0');
+}
+
+function formatBytesLabel($size)
+{
+    if ($size < 1024) {
+        return $size.' B';
+    }
+
+    if ($size < 1048576) {
+        return round($size / 1024, 1).' KB';
+    }
+
+    return round($size / 1048576, 2).' MB';
+}
+
 
 function renderLogsView()
 {
@@ -1604,17 +2958,37 @@ function renderLogsView()
         $type = 'log';
 
     $typeConfig = [
-        'log'  => ['glob' => '*.log',  'url' => fn ($id) => "/log/rview/$id",    'label' => 'LOG',  'desc' => 'Formatted plain text log'],
-        'rlog' => ['glob' => '*.rlog', 'url' => fn ($id) => "/log/bview/$id",    'label' => 'RLOG', 'desc' => 'Timestamped raw log'],
-        'html' => ['glob' => '*.html', 'url' => fn ($id) => "/log/htmlview/$id", 'label' => 'HTML', 'desc' => 'Styled HTML log'],
-        'fraw' => ['glob' => '*.fraw', 'url' => fn ($id) => "/log/frawview/$id", 'label' => 'FRAW', 'desc' => 'Full raw stream with signals'],
+        'log' => [
+            'glob' => '*.log',
+            'url' => fn ($id) => "/log/rview/$id",
+            'label' => 'LOG',
+            'desc' => 'Formatted plain text log',
+        ],
+        'rlog' => [
+            'glob' => '*.rlog',
+            'url' => fn ($id) => "/log/bview/$id",
+            'label' => 'RLOG',
+            'desc' => 'Timestamped raw log',
+        ],
+        'html' => [
+            'glob' => '*.html',
+            'url' => fn ($id) => "/log/htmlview/$id",
+            'label' => 'HTML',
+            'desc' => 'Styled HTML log',
+        ],
+        'fraw' => [
+            'glob' => '*.fraw',
+            'url' => fn ($id) => "/log/frawview/$id",
+            'label' => 'FRAW',
+            'desc' => 'Full raw stream with signals',
+        ],
     ];
 
     $logs = glob($config['logs_path'].'/'.$typeConfig[$type]['glob']) ?: [];
     usort($logs, fn ($a, $b) => filemtime($b) - filemtime($a));
 
     $tabColors = [
-        'log'  => 'indigo',
+        'log' => 'indigo',
         'rlog' => 'violet',
         'html' => 'sky',
         'fraw' => 'amber',
@@ -1624,24 +2998,20 @@ function renderLogsView()
         $fn = basename($logPath);
         $id = preg_replace('/\.log.*$/', '', $fn);
         $baseLog = $config['logs_path'].'/'.$id.'.log';
-        if (! file_exists($baseLog))
-            return null;
-        $content = file_get_contents($baseLog);
-        $lines = preg_split('/\r\n|\r|\n/', trim($content));
-        $exitLine = $lines[count($lines) - 5] ?? '';
-
-        return str_contains($exitLine, 'EXIT: 0');
+        return resolveLogExecutionStatus($baseLog);
     };
 
     ?>
     <!DOCTYPE html>
     <html lang="en">
+
     <head>
         <meta charset="UTF-8">
         <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
         <title>Logs — Deployer</title>
         <?= renderHeadImports() ?>
     </head>
+
     <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-300 p-8 font-mono text-sm transition-colors duration-200">
         <div class="max-w-6xl mx-auto">
 
@@ -1651,7 +3021,7 @@ function renderLogsView()
                     <h1 class="text-slate-900 dark:text-white font-bold text-xl tracking-tighter uppercase">SIMPLE PHP <span class="text-[#a855f7]">DEPLOYER</span></h1>
                     <p class="text-slate-400 dark:text-slate-500">Execution Logs</p>
                 </div>
-                <a href="/health" class="text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-bold uppercase tracking-tighter">← Dashboard</a>
+                <a href="<?= dashboardUrl() ?>" class="text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-bold uppercase tracking-tighter">← Dashboard</a>
             </div>
 
             <!-- Tabs -->
@@ -1665,7 +3035,7 @@ function renderLogsView()
                             : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/40';
                         ?>
                         <a href="/alllogs?type=<?= $key ?>"
-                           class="px-6 py-3 text-[10px] font-bold uppercase tracking-widest transition <?= $activeClass ?>">
+                            class="px-6 py-3 text-[10px] font-bold uppercase tracking-widest transition <?= $activeClass ?>">
                             <?= $cfg['label'] ?>
                             <?php if ($active): ?>
                                 <span class="ml-1.5 text-[9px] opacity-60"><?= $cfg['desc'] ?></span>
@@ -1681,57 +3051,53 @@ function renderLogsView()
                             No <?= strtoupper($type) ?> logs found.
                         </div>
                     <?php else: ?>
-                    <table class="w-full text-left border-collapse">
-                        <thead>
-                            <tr class="bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 text-[10px] uppercase">
-                                <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800">File</th>
-                                <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800">Date</th>
-                                <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800 text-right">Size</th>
-                                <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800 text-right">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
-                            <?php foreach ($logs as $logPath):
-                                $fn = basename($logPath);
-                                $id = preg_replace('/\.log.*$/', '', $fn);
-                                $isOk = $resolveStatus($logPath);
-                                $size = filesize($logPath);
-                                $sizeLabel = $size < 1024
-                                    ? $size.' B'
-                                    : ($size < 1048576
-                                        ? round($size / 1024, 1).' KB'
-                                        : round($size / 1048576, 2).' MB');
-                                $viewUrl = ($typeConfig[$type]['url'])($id);
-                                ?>
-                                <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition">
-                                    <td class="px-6 py-4 text-xs">
-                                        <?php if ($isOk === true): ?>
-                                            <span class="mr-2 text-emerald-500">●</span>
-                                        <?php elseif ($isOk === false): ?>
-                                            <span class="mr-2 text-rose-500">●</span>
-                                        <?php else: ?>
-                                            <span class="mr-2 text-slate-300 dark:text-slate-700">●</span>
-                                        <?php endif; ?>
-                                        <?= htmlspecialchars($fn) ?>
-                                    </td>
-                                    <td class="px-6 py-4 text-slate-400 dark:text-slate-600 text-xs">
-                                        <?= date('Y-m-d H:i:s', filemtime($logPath)) ?>
-                                    </td>
-                                    <td class="px-6 py-4 text-slate-400 dark:text-slate-600 text-xs text-right tabular-nums">
-                                        <?= $sizeLabel ?>
-                                    </td>
-                                    <td class="px-6 py-4 text-right">
-                                        <a target="_blank" href="<?= $viewUrl ?>"
-                                           class="inline-block px-3 py-1 rounded text-[10px] font-bold uppercase tracking-wide
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 text-[10px] uppercase">
+                                    <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800">File</th>
+                                    <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800">Date</th>
+                                    <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800 text-right">Size</th>
+                                    <th class="px-6 py-3 font-bold border-b border-slate-100 dark:border-slate-800 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                                <?php foreach ($logs as $logPath):
+                                    $fn = basename($logPath);
+                                    $id = preg_replace('/\.log.*$/', '', $fn);
+                                    $isOk = $resolveStatus($logPath);
+                                    $size = filesize($logPath);
+                                    $sizeLabel = formatBytesLabel($size);
+                                    $viewUrl = $typeConfig[$type]['url']($id);
+                                    ?>
+                                    <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition">
+                                        <td class="px-6 py-4 text-xs">
+                                            <?php if ($isOk === true): ?>
+                                                <span class="mr-2 text-emerald-500">●</span>
+                                            <?php elseif ($isOk === false): ?>
+                                                <span class="mr-2 text-rose-500">●</span>
+                                            <?php else: ?>
+                                                <span class="mr-2 text-slate-300 dark:text-slate-700">●</span>
+                                            <?php endif; ?>
+                                            <?= htmlspecialchars($fn) ?>
+                                        </td>
+                                        <td class="px-6 py-4 text-slate-400 dark:text-slate-600 text-xs">
+                                            <?= date('Y-m-d H:i:s', filemtime($logPath)) ?>
+                                        </td>
+                                        <td class="px-6 py-4 text-slate-400 dark:text-slate-600 text-xs text-right tabular-nums">
+                                            <?= $sizeLabel ?>
+                                        </td>
+                                        <td class="px-6 py-4 text-right">
+                                            <a target="_blank" href="<?= $viewUrl ?>"
+                                                class="inline-block px-3 py-1 rounded text-[10px] font-bold uppercase tracking-wide
                                                   bg-<?= $tabColors[$type] ?>-500/10 text-<?= $tabColors[$type] ?>-600 dark:text-<?= $tabColors[$type] ?>-400
                                                   hover:bg-<?= $tabColors[$type] ?>-500/20 transition">
-                                            OPEN
-                                        </a>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
+                                                OPEN
+                                            </a>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
                     <?php endif; ?>
                 </div>
 
@@ -1744,36 +3110,40 @@ function renderLogsView()
 
         </div>
     </body>
+
     </html>
-    <?php
+<?php
 }
 
 function renderLiveStatus()
 {
     global $statusFile;
     if (! file_exists($statusFile)) {
-        header('Location: /health');
+        header('Location: ' . dashboardUrl());
         exit();
     }
     $data = json_decode(file_get_contents($statusFile), true);
     ?>
     <!DOCTYPE html>
     <html lang="en">
+
     <head>
         <meta charset="UTF-8">
         <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
         <title>Execution Status</title>
         <?= renderHeadImports() ?>
         <script>
+            window.dashboardUrl = '<?= dashboardUrl() ?>';
+
             async function updateStatus() {
                 try {
                     const response = await fetch('/status/data');
                     const data = await response.json();
-                    
+
                     // Update task name and progress
                     document.getElementById('current-task').textContent = data.task;
                     document.getElementById('progress-text').textContent = `${data.index}/${data.total}`;
-                    
+
                     // Update progress bar
                     const progressPercent = data.running || data.finished ? (data.index / data.total) * 100 : ((data.index - 1) / data.total) * 100;
                     document.getElementById('progress-bar').style.width = progressPercent + '%';
@@ -1806,7 +3176,7 @@ function renderLiveStatus()
                         let rowClass = 'border-transparent';
                         let bounce = '';
 
-                        switch(status) {
+                        switch (status) {
                             case 'success':
                                 badgeClass = 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20';
                                 label = 'DONE';
@@ -1880,12 +3250,12 @@ function renderLiveStatus()
                         resultContainer.classList.remove('hidden');
                         resultContainer.className = `mb-6 p-4 rounded-lg border ${data.success ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500' : 'bg-rose-500/10 border-rose-500/20 text-rose-500'} flex justify-between items-center uppercase text-[10px] font-bold tracking-widest`;
                         resultContainer.innerHTML = `<span>${data.success ? '✓ Deployment Completed' : '✕ Deployment Failed'}</span><span>Duration: ${data.duration}s</span>`;
-                        
+
                         document.getElementById('action-buttons').innerHTML = `
-                            <a href="/health" class="bg-slate-800 text-white px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-700 transition">BACK TO DASHBOARD</a>
+                            <a href="${window.dashboardUrl}" class="bg-slate-800 text-white px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-700 transition">BACK TO DASHBOARD</a>
                             <a href="/log/view?file=${encodeURIComponent(data.log_file)}" class="border border-slate-200 dark:border-slate-800 px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition">VIEW FULL LOG</a>
                         `;
-                        
+
                         // Stop polling if finished
                         clearInterval(pollInterval);
                     }
@@ -1899,11 +3269,13 @@ function renderLiveStatus()
                 if (!confirm('Are you sure you want to stop the deployment?')) {
                     return;
                 }
-                
+
                 try {
-                    const response = await fetch('/deploy/stop', { method: 'POST' });
+                    const response = await fetch('/deploy/stop', {
+                        method: 'POST'
+                    });
                     const data = await response.json();
-                    
+
                     if (data.success) {
                         alert('Deployment stopped successfully');
                         updateStatus();
@@ -1923,9 +3295,10 @@ function renderLiveStatus()
             window.onload = updateStatus;
         </script>
     </head>
+
     <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-400 min-h-screen font-mono p-6 transition-colors duration-200">
         <div class="w-full max-w-6xl mx-auto">
-            
+
             <!-- Header Section -->
             <div class="mb-8 flex justify-between items-end border-b border-slate-200 dark:border-slate-700 pb-6">
                 <div>
@@ -1948,7 +3321,7 @@ function renderLiveStatus()
 
             <!-- Two-Column Layout: Task List + Real-time Output -->
             <div class="grid grid-cols-2 gap-6 mb-8">
-                
+
                 <!-- Left Column: Task List with Expandable Outputs -->
                 <div class="flex flex-col">
                     <div class="text-[10px] text-slate-400 dark:text-slate-500 mb-3 uppercase tracking-[0.2em] font-bold">Task Execution Timeline</div>
@@ -1971,7 +3344,7 @@ function renderLiveStatus()
                     <p id="status-text" class="text-[9px] text-slate-400 dark:text-slate-600 uppercase tracking-widest italic">
                         System executing instructions...
                     </p>
-                    <a href="/health" class="text-[10px] text-blue-500 hover:underline">Exit Live View</a>
+                    <a href="<?= dashboardUrl() ?>" class="text-[10px] text-blue-500 hover:underline">Exit Live View</a>
                 </div>
 
                 <div id="result-container" class="hidden mb-4"></div>
@@ -1986,6 +3359,7 @@ function renderLiveStatus()
 
         </div>
     </body>
+
     </html>
-    <?php
+<?php
 }
