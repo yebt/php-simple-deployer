@@ -103,6 +103,8 @@ $config = [
     'dashboard_route' => env('DASHBOARD_ROUTE') ?? 'health',
 ];
 
+const SELF_UPDATE_URL = 'https://raw.githubusercontent.com/yebt/php-simple-deployer/refs/heads/main/index.php';
+
 // Ensure logs directory exists
 if (! is_dir($config['logs_path'])) {
     mkdir($config['logs_path'], 0777, true);
@@ -144,6 +146,17 @@ if (isset($argv[1]) && $argv[1] === 'run-artifact-deploy') {
         $argv[4] ?? 'main',
     );
     exit();
+}
+
+if (isset($argv[1]) && $argv[1] === 'self-update') {
+    try {
+        $result = updateCurrentScript();
+        echo 'Updated successfully. Backup: '.$result['backup_path'].PHP_EOL;
+        exit(0);
+    } catch (Throwable $e) {
+        fwrite(STDERR, 'Self-update failed: '.$e->getMessage().PHP_EOL);
+        exit(1);
+    }
 }
 
 // ROUTER
@@ -221,6 +234,7 @@ $router->add('/status/live', 'actionStatusLive');
 $router->add('/deploy/stop', 'actionDeployStop');
 $router->add('/test-notify', 'actionNotifyTest');
 $router->add('/clear-history', 'actionClearHistory');
+$router->add('/script/update', 'actionSelfUpdate');
 
 $router->add('404', function () {
     header('HTTP/1.0 404 Not Found');
@@ -476,6 +490,36 @@ MARKDOWN
 function actionClearHistory()
 {
     clearHistory();
+}
+
+function actionSelfUpdate()
+{
+    global $config, $method;
+
+    validateSecurity();
+
+    if ($method !== 'GET') {
+        http_response_code(405);
+        exit('Method Not Allowed');
+    }
+
+    $returnTo = normalizeDashboardReturn($_GET['return'] ?? ($config['dashboard_route'] ?? 'health'));
+
+    try {
+        $result = updateCurrentScript();
+        $query = http_build_query([
+            'updated' => '1',
+            'backup' => basename($result['backup_path']),
+        ]);
+    } catch (Throwable $e) {
+        $query = http_build_query([
+            'updated' => '0',
+            'message' => $e->getMessage(),
+        ]);
+    }
+
+    header('Location: /'.$returnTo.($query ? '?'.$query : ''));
+    exit();
 }
 
 function actionDeployStop()
@@ -1681,6 +1725,158 @@ function clearHistory()
     header('Location: ' . dashboardUrl('cleared=1'));
 }
 
+function normalizeDashboardReturn($route)
+{
+    global $config;
+
+    $fallback = $config['dashboard_route'] ?? 'health';
+
+    if (! is_string($route) || ! preg_match('/^[a-zA-Z0-9_-]+$/', $route)) {
+        return $fallback;
+    }
+
+    return $route;
+}
+
+function downloadRemoteScript($url)
+{
+    $ch = curl_init($url);
+    if ($ch === false) {
+        throw new RuntimeException('Unable to initialize update download.');
+    }
+
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_TIMEOUT => 30,
+        CURLOPT_USERAGENT => 'SPHPD self-update',
+    ]);
+
+    $content = curl_exec($ch);
+    $curlError = curl_error($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    /* curl_close($ch); */
+
+    if ($content === false) {
+        throw new RuntimeException('Unable to download latest script: '.$curlError);
+    }
+
+    if ($httpCode < 200 || $httpCode >= 300) {
+        throw new RuntimeException('Unexpected response while downloading latest script (HTTP '.$httpCode.').');
+    }
+
+    if (! is_string($content) || trim($content) === '') {
+        throw new RuntimeException('Downloaded script is empty.');
+    }
+
+    if (! str_starts_with(ltrim($content), '<?php')) {
+        throw new RuntimeException('Downloaded file does not look like a PHP script.');
+    }
+
+    return $content;
+}
+
+function updateCurrentScript()
+{
+    $targetFile = __FILE__;
+    $remoteContent = downloadRemoteScript(SELF_UPDATE_URL);
+    $expectedBytes = strlen($remoteContent);
+    $timestamp = date('Ymd_His');
+    $backupPath = $targetFile.'.bak.'.$timestamp;
+    $currentPermissions = fileperms($targetFile);
+    $temporaryFile = tempnam(dirname($targetFile), 'index.php.update.');
+
+    if ($temporaryFile === false) {
+        throw new RuntimeException('Unable to create a temporary file for the update.');
+    }
+
+    $writtenBytes = file_put_contents($temporaryFile, $remoteContent, LOCK_EX);
+
+    if ($writtenBytes === false || $writtenBytes !== $expectedBytes) {
+        unlink($temporaryFile);
+        throw new RuntimeException('Unable to write downloaded script to the temporary file.');
+    }
+
+    if ($currentPermissions !== false) {
+        chmod($temporaryFile, $currentPermissions & 0777);
+    }
+
+    if (! rename($targetFile, $backupPath)) {
+        unlink($temporaryFile);
+        throw new RuntimeException('Unable to move current script to '.$backupPath.'.');
+    }
+
+    if (! rename($temporaryFile, $targetFile)) {
+        rename($backupPath, $targetFile);
+        unlink($temporaryFile);
+        throw new RuntimeException('Unable to replace index.php with the downloaded script.');
+    }
+
+    clearstatcache(true, $targetFile);
+
+    return [
+        'backup_path' => $backupPath,
+        'bytes' => $writtenBytes,
+    ];
+}
+
+function resolveDashboardFlash()
+{
+    if (isset($_GET['updated'])) {
+        if ($_GET['updated'] === '1') {
+            $backup = $_GET['backup'] ?? 'index.php.bak.<timestamp>';
+
+            return [
+                'type' => 'success',
+                'message' => 'Script updated successfully. Backup created: '.$backup,
+            ];
+        }
+
+        return [
+            'type' => 'error',
+            'message' => $_GET['message'] ?? 'Unable to update the script.',
+        ];
+    }
+
+    if (($_GET['cleared'] ?? null) === '1') {
+        return [
+            'type' => 'success',
+            'message' => 'History cleared successfully.',
+        ];
+    }
+
+    if (isset($_GET['notified'])) {
+        return [
+            'type' => $_GET['notified'] === '1' ? 'success' : 'error',
+            'message' => $_GET['notified'] === '1'
+                ? 'Test notification sent successfully.'
+                : 'Unable to send the test notification.',
+        ];
+    }
+
+    return null;
+}
+
+function renderDashboardFlash()
+{
+    $flash = resolveDashboardFlash();
+
+    if (! $flash) {
+        return;
+    }
+
+    $isSuccess = $flash['type'] === 'success';
+    $classes = $isSuccess
+        ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
+        : 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-500/30 text-rose-700 dark:text-rose-300';
+    ?>
+    <div class="mb-6 rounded-lg border px-4 py-3 text-xs <?= $classes ?>">
+        <?= htmlspecialchars($flash['message'], ENT_QUOTES, 'UTF-8') ?>
+    </div>
+    <?php
+}
+
 function runTasksWithShell($tasks, &$fullLog, &$fullLogRaw, &$taskStatus)
 {
     $descriptors = [
@@ -1931,6 +2127,8 @@ function renderHealth2View()
                 <a href="/alllogs" class="text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-bold uppercase tracking-tighter">View all logs →</a>
             </header>
 
+            <?php renderDashboardFlash(); ?>
+
             <!-- Critical Issues -->
             <?php if (! empty($criticalIssues)): ?>
                 <div class="mb-6 space-y-2">
@@ -2044,6 +2242,10 @@ function renderHealth2View()
 
                                 <a href="/test-notify?return=health2" class="flex items-center justify-center w-full py-2 rounded text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition">
                                     Test Notify
+                                </a>
+
+                                <a href="/script/update?manual=1&return=health2" onclick="return confirm('Download the latest script version and replace index.php?')" class="flex items-center justify-center w-full py-2 rounded text-[11px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/30 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 transition">
+                                    Update Script
                                 </a>
 
                                 <a href="/clear-history" onclick="return confirm('Clear all logs?')" class="flex items-center justify-center w-full py-2 rounded text-[11px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-500/30 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition">
@@ -2305,6 +2507,8 @@ function renderHealth1View()
                     <?php endif; ?>
                 </div>
 
+                <?php renderDashboardFlash(); ?>
+
                 <div class="grid grid-cols-2 lg:grid-cols-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30">
                     <div class="px-5 py-4 border-b lg:border-b-0 lg:border-r border-slate-100 dark:border-slate-800">
                         <div class="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">Logs</div>
@@ -2530,6 +2734,7 @@ function renderHealth1View()
                             <?php endif; ?>
 
                             <a href="/test-notify" class="block w-full text-center border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 py-3 rounded text-xs transition uppercase tracking-[0.18em]">Test notification</a>
+                            <a href="/script/update?manual=1&return=health1" onclick="return confirm('Download the latest script version and replace index.php?')" class="block w-full text-center border border-indigo-200 text-indigo-600 dark:text-indigo-400 dark:border-indigo-500/30 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 py-3 rounded text-xs transition uppercase tracking-[0.18em]">Update script</a>
                             <a href="/alllogs" class="block w-full text-center border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 py-3 rounded text-xs transition uppercase tracking-[0.18em]">All logs</a>
                             <a href="/clear-history" onclick="return confirm('Clear all logs?')" class="block w-full text-center text-rose-500 hover:text-rose-400 py-2 text-xs transition uppercase tracking-[0.18em]">Clear history</a>
                         </div>
@@ -2691,6 +2896,8 @@ function renderHealthView()
                 </div>
             <?php endif; ?>
 
+            <?php renderDashboardFlash(); ?>
+
             <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
                 <div class="lg:col-span-1 space-y-4">
                     <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-5 rounded-lg shadow-sm dark:shadow-xl text-xs">
@@ -2804,6 +3011,7 @@ function renderHealthView()
                                 </a>
                             <?php endif; ?>
                             <a href="/test-notify" class="block w-full text-center border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 py-2 rounded text-xs transition">TEST NOTIFICATION</a>
+                            <a href="/script/update?manual=1&return=health" onclick="return confirm('Download the latest script version and replace index.php?')" class="block w-full text-center border border-indigo-200 text-indigo-600 dark:text-indigo-400 dark:border-indigo-500/30 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 py-2 rounded text-xs transition uppercase">UPDATE SCRIPT</a>
                             <a href="/alllogs" class="block w-full text-center border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 py-2 rounded text-xs transition uppercase tracking-widest">All Logs</a>
                             <a href="/clear-history" onclick="return confirm('Clear all logs?')" class="block w-full text-center text-rose-500 hover:text-rose-500 py-2 text-xs transition">CLEAR HISTORY</a>
                         </div>
