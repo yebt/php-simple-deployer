@@ -16,6 +16,7 @@ A minimalist, single-file PHP deployment tool with a live dashboard, webhook sup
 - **Webhook endpoint** — trigger deployments via HTTP (with optional security token)
 - **Artifact deploy** — download a GitLab CI artifact, extract it, and run instructions on it
 - **Telegram notifications** — receive deployment results in a chat or thread
+- **Self-update** — download the latest `index.php` from GitHub and keep a timestamped backup
 - **Multiple log formats** — plain text (`.log`), timestamped raw (`.rlog`), HTML (`.html`), and full raw stream (`.fraw`)
 - **Logs browser** — paginated, tab-filtered view of all logs at `/alllogs`
 - **Real-time `.fraw` log** — written line-by-line during execution; `tail -f` it for live stream debugging
@@ -200,6 +201,7 @@ Commands within a task share the same shell session, so environment variables ex
 | `GET`      | `/test-notify`             | Send a test Telegram notification                               |
 | `GET`      | `/test-notify?return=health2` | Send test and return to specific dashboard                   |
 | `GET`      | `/clear-history`           | Clear all deployment log history                                |
+| `GET`      | `/script/update?manual=1`  | Download the latest `index.php` and move current file to `./backups/index.php.bak.<timestamp>` |
 
 ### Artifact Deploy
 
@@ -216,6 +218,24 @@ When `SECURITY_TOKEN` is set, all webhook requests must include it:
 - **Query string:** `?token=<token>`
 
 Requests from `localhost` / `127.0.0.1` are always allowed (for UI-triggered deployments).
+
+---
+
+## Maintenance
+
+Update the current script from GitHub while keeping a timestamped backup:
+
+```sh
+php index.php self-update
+```
+
+This downloads:
+
+```text
+https://raw.githubusercontent.com/yebt/php-simple-deployer/refs/heads/main/index.php
+```
+
+and stores the previous file as `./backups/index.php.bak.<timestamp>`.
 
 ---
 
