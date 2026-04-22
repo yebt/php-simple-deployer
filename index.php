@@ -104,6 +104,7 @@ $config = [
 ];
 
 const SELF_UPDATE_URL = 'https://raw.githubusercontent.com/yebt/php-simple-deployer/refs/heads/main/index.php';
+const SELF_UPDATE_BACKUP_DIR = __DIR__.'/backups';
 
 // Ensure logs directory exists
 if (! is_dir($config['logs_path'])) {
@@ -509,7 +510,7 @@ function actionSelfUpdate()
         $result = updateCurrentScript();
         $query = http_build_query([
             'updated' => '1',
-            'backup' => basename($result['backup_path']),
+            'backup' => 'backups/'.basename($result['backup_path']),
         ]);
     } catch (Throwable $e) {
         $query = http_build_query([
@@ -1783,12 +1784,18 @@ function updateCurrentScript()
     $remoteContent = downloadRemoteScript(SELF_UPDATE_URL);
     $expectedBytes = strlen($remoteContent);
     $timestamp = date('Ymd_His');
-    $backupPath = $targetFile.'.bak.'.$timestamp;
+    $backupDir = SELF_UPDATE_BACKUP_DIR;
+    $backupPath = $backupDir.'/index.php.bak.'.$timestamp;
     $currentPermissions = fileperms($targetFile);
     $temporaryFile = tempnam(dirname($targetFile), 'index.php.update.');
 
     if ($temporaryFile === false) {
         throw new RuntimeException('Unable to create a temporary file for the update.');
+    }
+
+    if (! is_dir($backupDir) && ! mkdir($backupDir, 0777, true)) {
+        unlink($temporaryFile);
+        throw new RuntimeException('Unable to create backup directory at '.$backupDir.'.');
     }
 
     $writtenBytes = file_put_contents($temporaryFile, $remoteContent, LOCK_EX);
@@ -1825,7 +1832,7 @@ function resolveDashboardFlash()
 {
     if (isset($_GET['updated'])) {
         if ($_GET['updated'] === '1') {
-            $backup = $_GET['backup'] ?? 'index.php.bak.<timestamp>';
+            $backup = $_GET['backup'] ?? 'backups/index.php.bak.<timestamp>';
 
             return [
                 'type' => 'success',
