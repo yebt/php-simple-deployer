@@ -1756,7 +1756,7 @@ function downloadRemoteScript($url)
     $content = curl_exec($ch);
     $curlError = curl_error($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    /* curl_close($ch); */
 
     if ($content === false) {
         throw new RuntimeException('Unable to download latest script: '.$curlError);
