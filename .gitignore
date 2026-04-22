@@ -37,3 +37,4 @@ phpcs.xml
 logs
 yq_linux_amd64
 index.php.bak
+*.php.bak.*
