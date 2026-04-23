@@ -1829,6 +1829,49 @@ function updateCurrentScript()
     ];
 }
 
+function resolveSelfUpdateStatus()
+{
+    $cacheFile = sys_get_temp_dir().'/sphpd_self_update_status_'.md5(__FILE__).'.json';
+    $cacheTtl = 300;
+    $cachedStatus = null;
+
+    if (is_file($cacheFile)) {
+        $decoded = json_decode(file_get_contents($cacheFile), true);
+        if (is_array($decoded)) {
+            $cachedStatus = $decoded;
+        }
+    }
+
+    $cacheIsFresh = $cachedStatus
+        && array_key_exists('checked_at', $cachedStatus)
+        && (time() - (int) $cachedStatus['checked_at']) < $cacheTtl;
+
+    if ($cacheIsFresh) {
+        return $cachedStatus;
+    }
+
+    try {
+        $remoteContent = downloadRemoteScript(SELF_UPDATE_URL);
+        $currentHash = hash_file('sha256', __FILE__);
+        $remoteHash = hash('sha256', $remoteContent);
+        $status = [
+            'checked_at' => time(),
+            'has_update' => $currentHash !== $remoteHash,
+        ];
+
+        file_put_contents($cacheFile, json_encode($status), LOCK_EX);
+
+        return $status;
+    } catch (Throwable $e) {
+        error_log('Self-update check failed: '.$e->getMessage());
+
+        return $cachedStatus ?? [
+            'checked_at' => time(),
+            'has_update' => false,
+        ];
+    }
+}
+
 function resolveDashboardFlash()
 {
     if (isset($_GET['updated'])) {
@@ -1881,6 +1924,28 @@ function renderDashboardFlash()
     ?>
     <div class="mb-6 rounded-lg border px-4 py-3 text-xs <?= $classes ?>">
         <?= htmlspecialchars($flash['message'], ENT_QUOTES, 'UTF-8') ?>
+    </div>
+    <?php
+}
+
+function renderSelfUpdateBanner($returnRoute)
+{
+    $updateStatus = resolveSelfUpdateStatus();
+
+    if (! ($updateStatus['has_update'] ?? false)) {
+        return;
+    }
+
+    $route = normalizeDashboardReturn($returnRoute);
+    $updateUrl = '/script/update?manual=1&return='.rawurlencode($route);
+    ?>
+    <div class="mb-6 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 text-xs text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300">
+        A newer script version is available.
+        <a
+            href="<?= htmlspecialchars($updateUrl, ENT_QUOTES, 'UTF-8') ?>"
+            onclick="return confirm('Download the latest script version and replace index.php?')"
+            class="font-bold underline underline-offset-2 hover:no-underline"
+        >Update now</a>.
     </div>
     <?php
 }
@@ -2136,6 +2201,7 @@ function renderHealth2View()
             </header>
 
             <?php renderDashboardFlash(); ?>
+            <?php renderSelfUpdateBanner('health2'); ?>
 
             <!-- Critical Issues -->
             <?php if (! empty($criticalIssues)): ?>
@@ -2250,10 +2316,6 @@ function renderHealth2View()
 
                                 <a href="/test-notify?return=health2" class="flex items-center justify-center w-full py-2 rounded text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition">
                                     Test Notify
-                                </a>
-
-                                <a href="/script/update?manual=1&return=health2" onclick="return confirm('Download the latest script version and replace index.php?')" class="flex items-center justify-center w-full py-2 rounded text-[11px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/30 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 transition">
-                                    Update Script
                                 </a>
 
                                 <a href="/clear-history" onclick="return confirm('Clear all logs?')" class="flex items-center justify-center w-full py-2 rounded text-[11px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-500/30 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition">
@@ -2516,6 +2578,7 @@ function renderHealth1View()
                 </div>
 
                 <?php renderDashboardFlash(); ?>
+                <?php renderSelfUpdateBanner('health1'); ?>
 
                 <div class="grid grid-cols-2 lg:grid-cols-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30">
                     <div class="px-5 py-4 border-b lg:border-b-0 lg:border-r border-slate-100 dark:border-slate-800">
@@ -2742,7 +2805,6 @@ function renderHealth1View()
                             <?php endif; ?>
 
                             <a href="/test-notify" class="block w-full text-center border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 py-3 rounded text-xs transition uppercase tracking-[0.18em]">Test notification</a>
-                            <a href="/script/update?manual=1&return=health1" onclick="return confirm('Download the latest script version and replace index.php?')" class="block w-full text-center border border-indigo-200 text-indigo-600 dark:text-indigo-400 dark:border-indigo-500/30 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 py-3 rounded text-xs transition uppercase tracking-[0.18em]">Update script</a>
                             <a href="/alllogs" class="block w-full text-center border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 py-3 rounded text-xs transition uppercase tracking-[0.18em]">All logs</a>
                             <a href="/clear-history" onclick="return confirm('Clear all logs?')" class="block w-full text-center text-rose-500 hover:text-rose-400 py-2 text-xs transition uppercase tracking-[0.18em]">Clear history</a>
                         </div>
@@ -2905,6 +2967,7 @@ function renderHealthView()
             <?php endif; ?>
 
             <?php renderDashboardFlash(); ?>
+            <?php renderSelfUpdateBanner('health'); ?>
 
             <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
                 <div class="lg:col-span-1 space-y-4">
@@ -3019,7 +3082,6 @@ function renderHealthView()
                                 </a>
                             <?php endif; ?>
                             <a href="/test-notify" class="block w-full text-center border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 py-2 rounded text-xs transition">TEST NOTIFICATION</a>
-                            <a href="/script/update?manual=1&return=health" onclick="return confirm('Download the latest script version and replace index.php?')" class="block w-full text-center border border-indigo-200 text-indigo-600 dark:text-indigo-400 dark:border-indigo-500/30 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 py-2 rounded text-xs transition uppercase">UPDATE SCRIPT</a>
                             <a href="/alllogs" class="block w-full text-center border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 py-2 rounded text-xs transition uppercase tracking-widest">All Logs</a>
                             <a href="/clear-history" onclick="return confirm('Clear all logs?')" class="block w-full text-center text-rose-500 hover:text-rose-500 py-2 text-xs transition">CLEAR HISTORY</a>
                         </div>
