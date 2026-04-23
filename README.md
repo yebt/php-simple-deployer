@@ -17,6 +17,7 @@ A minimalist, single-file PHP deployment tool with a live dashboard, webhook sup
 - **Artifact deploy** — download a GitLab CI artifact, extract it, and run instructions on it
 - **Telegram notifications** — receive deployment results in a chat or thread
 - **Self-update** — download the latest `index.php` from GitHub and keep a timestamped backup
+- **Update notice banner** — all dashboard variants show a notice only when a newer upstream script is available
 - **Multiple log formats** — plain text (`.log`), timestamped raw (`.rlog`), HTML (`.html`), and full raw stream (`.fraw`)
 - **Logs browser** — paginated, tab-filtered view of all logs at `/alllogs`
 - **Real-time `.fraw` log** — written line-by-line during execution; `tail -f` it for live stream debugging
