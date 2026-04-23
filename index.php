@@ -679,8 +679,9 @@ function validateSecurity()
         return;
     }
 
-    $headers = getallheaders();
-    $token = $headers['X-Deploy-Token'] ?? $_GET['token'] ?? '';
+    /* $headers = getallheaders(); */
+    $headers = array_change_key_case(getallheaders(), CASE_LOWER);
+    $token = $headers['x-deploy-token'] ?? $_GET['token'] ?? '';
     if ($token !== $config['secure_token']) {
         http_response_code(401);
         exit('Unauthorized');
