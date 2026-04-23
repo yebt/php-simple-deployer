@@ -2178,7 +2178,7 @@ function renderHealth2View()
             <!-- Header -->
             <header class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8 pb-6 border-b border-slate-200 dark:border-slate-800">
                 <div>
-                    <h1 class="text-slate-900 dark:text-white font-bold text-xl tracking-tighter uppercase">Simple PHP <span class="text-[#a855f7]">Deployer</span></h1>
+                    <a href="/"><h1 class="text-slate-900 dark:text-white font-bold text-xl tracking-tighter uppercase">Simple PHP <span class="text-[#a855f7]">Deployer</span></h1></a>
                     <div class="flex items-center gap-3 mt-2">
                         <?php if ($isActuallyRunning): ?>
                             <span class="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">
@@ -2587,7 +2587,7 @@ function renderHealth1View()
                 <div class="px-5 py-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div>
                         <div class="flex flex-wrap items-center gap-3">
-                            <h1 class="text-slate-900 dark:text-white font-bold text-xl tracking-tighter uppercase">Simple PHP <span class="text-[#a855f7]">Deployer</span></h1>
+                            <a href="/"><h1 class="text-slate-900 dark:text-white font-bold text-xl tracking-tighter uppercase">Simple PHP <span class="text-[#a855f7]">Deployer</span></h1></a>
                             <span class="inline-flex items-center gap-2 border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] <?= $headlineStatusClasses ?>">
                                 <span class="inline-flex h-2 w-2 rounded-full <?= $isActuallyRunning
                                     ? 'bg-blue-500 animate-pulse'
@@ -3003,7 +3003,7 @@ function renderHealthView()
         <div class="max-w-6xl mx-auto">
             <div class="flex justify-between items-start mb-10">
                 <div>
-                    <h1 class="text-slate-900 dark:text-white font-bold text-xl tracking-tighter uppercase">SIMPLE PHP <span class="text-[#a855f7]">DEPLOYER</span></h1>
+                    <a href="/"><h1 class="text-slate-900 dark:text-white font-bold text-xl tracking-tighter uppercase">SIMPLE PHP <span class="text-[#a855f7]">DEPLOYER</span></h1></a>
                     <p class="text-slate-400 dark:text-slate-500">
                         Host: <span class="text-slate-600 dark:text-slate-400"><?= $serverDomain ?></span> |
                         IP: <span class="text-slate-600 dark:text-slate-400"><?= $serverIp ?></span> |
@@ -3349,7 +3349,7 @@ function renderLogsView()
             <!-- Header -->
             <div class="flex justify-between items-start mb-8">
                 <div>
-                    <h1 class="text-slate-900 dark:text-white font-bold text-xl tracking-tighter uppercase">SIMPLE PHP <span class="text-[#a855f7]">DEPLOYER</span></h1>
+                    <a href="/"> <h1 class="text-slate-900 dark:text-white font-bold text-xl tracking-tighter uppercase">SIMPLE PHP <span class="text-[#a855f7]">DEPLOYER</span></h1></a>
                     <p class="text-slate-400 dark:text-slate-500">Execution Logs</p>
                 </div>
                 <a href="<?= dashboardUrl() ?>" class="text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-bold uppercase tracking-tighter">← Dashboard</a>
