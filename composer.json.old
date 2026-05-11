@@ -3,6 +3,17 @@
     "description": "A minimalist, single-file PHP deployment tool",
     "type": "project",
     "license": "MIT",
+    "require": {
+        "php": ">=8.2",
+        "latte/latte": "^3.0",
+        "symfony/yaml": "^7.0",
+        "symfony/process": "^7.0"
+    },
+    "require-dev": {
+        "pestphp/pest": "^3.0",
+        "carthage-software/mago": "^1.13.3",
+        "humbug/box": "^4.0"
+    },
     "autoload": {
         "psr-4": {
             "Sphpd\\": "src/"
@@ -19,12 +30,13 @@
             "Composer\\Config::disableProcessTimeout",
             "php -S localhost:5173 bin/app.php"
         ],
-        "test": "tools/vendor/bin/pest",
-        "build": "tools/vendor/bin/box compile"
+        "test": "vendor/bin/pest",
+        "build": "vendor/bin/box compile",
+        "mago": "vendor/bin/mago"
     },
-    "require": {
-        "latte/latte": "^2.11",
-        "symfony/yaml": "^5.4",
-        "symfony/process": "^5.4"
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
     }
 }
