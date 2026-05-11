@@ -6,7 +6,13 @@
     "license": "MIT",
     "autoload": {
         "psr-4": {
-            "SPHPD\\": "src/"
+            "Sphpd\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Sphpd\\Tests\\": "tests/",
+            "Tests\\": "tests/"
         }
     },
     "authors": [
@@ -25,7 +31,10 @@
         "start": [
             "Composer\\Config::disableProcessTimeout",
             "php -S localhost:5173 bin/app.php"
-        ]
+        ],
+        "test": "vendor/bin/pest",
+        "build": "vendor-bin/box/vendor/bin/box compile",
+        "binx": "echo 'bin'"
     },
     "config": {
         "allow-plugins": {
