@@ -1392,6 +1392,10 @@ function runTasks(
             $exitCode = 0; // Success by default
             $timeoutCounter = 0;
             $maxTimeoutIterations = 100; // ~500 seconds max per command
+            // Per-stream line buffers: fread may deliver partial lines, so we
+            // accumulate raw bytes here and only process complete lines.
+            $stdoutBuf = '';
+            $stderrBuf = '';
 
             $htmlLogContent .= "<pre style='background:#f0f0f0;padding:10px;border-radius:5px;'><code>";
             while (! $stdoutDone || ! $stderrDone) {
@@ -1429,45 +1433,65 @@ function runTasks(
 
                 $hasOutput = false;
                 foreach ($read as $stream) {
-                    $line = fgets($stream);
-                    if ($line === false)
+                    $chunk = fread($stream, 8192);
+                    if ($chunk === false || $chunk === '')
                         continue;
 
                     $hasOutput = true;
-                    if ($stream === $pipes[1]) {
-                        // Match __STDOUT_EOF__123 format
-                        $trimedLine = trim($line);
-                        if (
-                            preg_match('/^__STDOUT_EOF__(.*)$/', $trimedLine, $m)
-                            || str_contains($trimedLine, '__STDOUT_EOF__') // NOTE: Is possible a error if the element contains problems
-                        ) {
-                            $exitCode = (int) $m[1];
-                            $stdoutDone = true;
-                            $fullLogFRaw .= '[STDOUT] '.trim($line)."\n";
-                            file_put_contents($logFilePathFRaw, '[STDOUT] '.trim($line)."\n", FILE_APPEND);
-                        } else {
-                            $stdout .= $line;
-                            $statusData['current_output'] .= $line;
-                            $taskStatus[$indx]['output'] .= $line;
-                            $fullLogRaw .= '['.date('Y-m-d H:i:s')."][info  ] $line";
-                            $fullLogFRaw .= '[STDOUT] '.$line;
-                            file_put_contents($logFilePathFRaw, '[STDOUT] '.$line, FILE_APPEND);
-                            $htmlLogContent .= htmlspecialchars($line);
-                        }
+                    $isStdout = ($stream === $pipes[1]);
+
+                    if ($isStdout) {
+                        $stdoutBuf .= $chunk;
                     } else {
-                        // Match __STDERR_EOF__123 format
-                        if (preg_match('/^__STDERR_EOF__(.*)$/', trim($line), $m)) {
-                            $stderrDone = true;
-                            $fullLogFRaw .= '[STDERR] '.trim($line)."\n";
-                            file_put_contents($logFilePathFRaw, '[STDERR] '.trim($line)."\n", FILE_APPEND);
+                        $stderrBuf .= $chunk;
+                    }
+
+                    // Process all complete lines from the appropriate buffer.
+                    $bufRef = $isStdout ? $stdoutBuf : $stderrBuf;
+                    $lines = [];
+                    while (($pos = strpos($bufRef, "\n")) !== false) {
+                        $lines[] = substr($bufRef, 0, $pos + 1);
+                        $bufRef = substr($bufRef, $pos + 1);
+                    }
+                    if ($isStdout) {
+                        $stdoutBuf = $bufRef;
+                    } else {
+                        $stderrBuf = $bufRef;
+                    }
+
+                    foreach ($lines as $line) {
+                        if ($isStdout) {
+                            // Match __STDOUT_EOF__123 format
+                            $trimedLine = trim($line);
+                            if (preg_match('/^__STDOUT_EOF__(\d*)$/', $trimedLine, $m)) {
+                                $exitCode = (int) $m[1];
+                                $stdoutDone = true;
+                                $fullLogFRaw .= '[STDOUT] '.$trimedLine."\n";
+                                file_put_contents($logFilePathFRaw, '[STDOUT] '.$trimedLine."\n", FILE_APPEND);
+                            } else {
+                                $stdout .= $line;
+                                $statusData['current_output'] .= $line;
+                                $taskStatus[$indx]['output'] .= $line;
+                                $fullLogRaw .= '['.date('Y-m-d H:i:s')."][info  ] $line";
+                                $fullLogFRaw .= '[STDOUT] '.$line;
+                                file_put_contents($logFilePathFRaw, '[STDOUT] '.$line, FILE_APPEND);
+                                $htmlLogContent .= htmlspecialchars($line);
+                            }
                         } else {
-                            $stderr .= $line;
-                            $statusData['current_output'] .= $line;
-                            $taskStatus[$indx]['output'] .= $line;
-                            $fullLogRaw .= '['.date('Y-m-d H:i:s')."][error ] $line";
-                            $fullLogFRaw .= '[STDERR] '.$line;
-                            file_put_contents($logFilePathFRaw, '[STDERR] '.$line, FILE_APPEND);
-                            $htmlLogContent .= "<span style='color:red;'>".htmlspecialchars($line).'</span>';
+                            // Match __STDERR_EOF__123 format
+                            if (preg_match('/^__STDERR_EOF__(\d*)$/', trim($line), $m)) {
+                                $stderrDone = true;
+                                $fullLogFRaw .= '[STDERR] '.trim($line)."\n";
+                                file_put_contents($logFilePathFRaw, '[STDERR] '.trim($line)."\n", FILE_APPEND);
+                            } else {
+                                $stderr .= $line;
+                                $statusData['current_output'] .= $line;
+                                $taskStatus[$indx]['output'] .= $line;
+                                $fullLogRaw .= '['.date('Y-m-d H:i:s')."][error ] $line";
+                                $fullLogFRaw .= '[STDERR] '.$line;
+                                file_put_contents($logFilePathFRaw, '[STDERR] '.$line, FILE_APPEND);
+                                $htmlLogContent .= "<span style='color:red;'>".htmlspecialchars($line).'</span>';
+                            }
                         }
                     }
                 }
