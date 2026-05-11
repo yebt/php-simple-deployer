@@ -24,7 +24,7 @@ class ArifactContract
         public readonly string $project_id,
         public readonly string $branch,
         public readonly string $job,
-        /* public readonly string $job_id, */
+        public readonly string $job_id,
     ) {}
 }
 
@@ -370,7 +370,7 @@ function actionWebhookArtifactDeploy()
     executeArtifactDeployment(
         $dataArtifact->project_id,
         $dataArtifact->job,
-        /* $dataArtifact->job_id, */
+        $dataArtifact->job_id,
         $dataArtifact->branch,
     );
 }
@@ -395,7 +395,7 @@ function actionWebhookArtifactDeployNoWait()
         .' '
         .escapeshellarg($dataArtiact->job)
         .' '
-        /* .escapeshellarg($dataArtiact->job_id) */
+        .escapeshellarg($dataArtiact->job_id)
         .' > /dev/null 2>&1 &',
     );
 
@@ -599,11 +599,11 @@ function checkArtifact(string $method, $config): ArifactContract
     $projectId = $input['project_id'] ?? null;
     $branch = $input['branch'] ?? 'main';
     $job = $input['job'] ?? 'some';
-    /* $job_id = $input['job_id'] ?? null; */
+    $job_id = $input['job_id'] ?? null;
 
     // no null some of the vars
-    /* if (! $projectId || ! $job_id) { */
-    if (! $projectId) {
+    if (! $projectId || ! $job_id) {
+    /* if (! $projectId) { */
         http_response_code(400);
         header('Content-Type: application/json');
         echo json_encode(['error' => 'Missing required fields: project_id']);
@@ -614,7 +614,7 @@ function checkArtifact(string $method, $config): ArifactContract
         project_id: $projectId,
         branch: $branch,
         job: $job,
-        /* job_id: $job_id, */
+        job_id: $job_id,
     );
 }
 
@@ -965,7 +965,7 @@ function executeDeploymentWithSingleShellProccess()
     runTasks($logFilePath, $logFilePathRaw, $logFIlePathHTML, $logFilePathFRaw, $tasks);
 }
 
-function executeArtifactDeployment(?string $projectId, string $job, string $branch = 'main')
+function executeArtifactDeployment(?string $projectId, string $job, string $job_id, string $branch = 'main')
 {
     global $config, $statusFile;
 
@@ -1086,8 +1086,8 @@ function executeArtifactDeployment(?string $projectId, string $job, string $bran
     // Download artifact from GitLab
     $artifactFile = $deployDir.'/artifact.zip';
     $gitlabBase = rtrim($config['gitlab_base_url'], '/');
-    $artifactUrl = "{$gitlabBase}/api/v4/projects/{$projectId}/jobs/artifacts/{$branch}/download?job={$job}";
-    /* $artifactUrl = "{$gitlabBase}/api/v4/projects/{$projectId}/jobs/{$job_id}/artifacts"; */
+    /* $artifactUrl = "{$gitlabBase}/api/v4/projects/{$projectId}/jobs/artifacts/{$branch}/download?job={$job}"; */
+    $artifactUrl = "{$gitlabBase}/api/v4/projects/{$projectId}/jobs/{$job_id}/artifacts";
 
     $logLine("Downloading artifact — project: $projectId | branch: $branch | job: $job");
     $logLine("URL: $artifactUrl");
