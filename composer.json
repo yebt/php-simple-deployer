@@ -17,7 +17,8 @@
     ],
     "minimum-stability": "stable",
     "require-dev": {
-        "pestphp/pest": "^1.23"
+        "pestphp/pest": "^1.23",
+        "symfony/var-dumper": "^5.4"
     },
     "scripts": {
         "start": [
