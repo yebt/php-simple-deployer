@@ -290,3 +290,4 @@ modules.xml
 /build/
 
 # End of https://www.toptal.com/developers/gitignore/api/phpunit,cakephp,phpstorm+iml,fuelphp,phpstorm,composer
+vendor-bin/box
