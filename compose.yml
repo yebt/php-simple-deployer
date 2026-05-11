@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Containerfile
+    priviligied: true
     ports:
       - "5173:80"
     volumes:
