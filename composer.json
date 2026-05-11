@@ -33,6 +33,7 @@
     },
     "require": {
         "latte/latte": "^2.11",
-        "symfony/yaml": "^5.4"
+        "symfony/yaml": "^5.4",
+        "symfony/process": "^5.4"
     }
 }
