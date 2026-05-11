@@ -29,5 +29,8 @@
         "allow-plugins": {
             "pestphp/pest-plugin": true
         }
+    },
+    "require": {
+        "latte/latte": "^2.11"
     }
 }
