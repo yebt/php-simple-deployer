@@ -1,0 +1,27 @@
+{
+    "$schema": "https://getcomposer.org/schema.json",
+    "name": "yebt/php-simple-deployer",
+    "description": "A minimalist, single-file PHP deployment tool",
+    "type": "project",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "SPHPD\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Yahir Eduardo Bravo",
+            "email": "yahir.eduardo.bravo@gmail.com"
+        }
+    ],
+    "minimum-stability": "stable",
+    "require": {},
+    "require-dev": {},
+    "scripts": {
+        "start": [
+            "Composer\\Config::disableProcessTimeout",
+            "php -S localhost:5173 bin/app.php"
+        ]
+    }
+}
