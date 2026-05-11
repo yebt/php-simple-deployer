@@ -1825,6 +1825,10 @@ function updateCurrentScript()
 
     clearstatcache(true, $targetFile);
 
+    // Invalidate the update-check cache so the banner disappears immediately.
+    $cacheFile = sys_get_temp_dir().'/sphpd_self_update_status_'.md5($targetFile).'.json';
+    file_put_contents($cacheFile, json_encode(['checked_at' => time(), 'has_update' => false]), LOCK_EX);
+
     return [
         'backup_path' => $backupPath,
         'bytes' => $writtenBytes,
