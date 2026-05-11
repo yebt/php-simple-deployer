@@ -100,6 +100,7 @@ All configuration is done via `.env`:
 | `GITLAB_BASE_URL`           | `https://gitlab.com`  | GitLab instance base URL (change for self-hosted)                    |
 | `ARTIFACT_DEPLOY_DIR`       | `./artifact-deploy`   | Directory where artifacts are downloaded and extracted               |
 | `ARTIFACT_INSTRUCTIONS_FILE`| `artifact-deploy.json`| Instruction file executed after artifact extraction                  |
+| `DASHBOARD_ROUTE`           | `health`              | Default dashboard route used by redirects (`health`, `health1`, `health2`) |
 
 ---
 
@@ -111,6 +112,10 @@ SPHPD provides two dashboard views:
 - Full configuration details with sidebar layout
 - Shows all system and artifact config variables
 - Expanded view with examples and detailed status
+
+### `/health1` — Alternative Dashboard
+- Alias for the classic dashboard layout
+- Identical to `/health`; useful when you want a stable second route
 
 ### `/health2` — Modern Dashboard  
 - Minimal, professional design
@@ -182,6 +187,7 @@ Commands within a task share the same shell session, so environment variables ex
 | ---------- | -------------------------- | --------------------------------------------------------------- |
 | `GET`      | `/`                        | Redirects to dashboard (see `DASHBOARD_ROUTE`)                  |
 | `GET`      | `/health`                  | Classic dashboard — full config details, sidebar layout         |
+| `GET`      | `/health1`                 | Alias for `/health` — same classic view on a separate route     |
 | `GET`      | `/health2`                 | Modern dashboard — minimal design, light/dark theme             |
 | `GET/POST` | `/webhook/deploy`          | Trigger deployment (waits for completion)                       |
 | `GET/POST` | `/webhook/deploy?manual=1` | Trigger deployment from the UI (background process)             |
@@ -215,7 +221,7 @@ Commands within a task share the same shell session, so environment variables ex
 
 When `SECURITY_TOKEN` is set, all webhook requests must include it:
 
-- **Header:** `X-Deploy-Token: <token>`
+- **Header:** `X-Deploy-Token: <token>` (header name is matched case-insensitively)
 - **Query string:** `?token=<token>`
 
 Requests from `localhost` / `127.0.0.1` are always allowed (for UI-triggered deployments).
@@ -307,7 +313,8 @@ notify-deploy:
         -d '{
           "project_id": "'$CI_PROJECT_ID'",
           "branch":     "'$CI_COMMIT_REF_NAME'",
-          "job":        "build"
+          "job":        "build",
+          "job_id":     "'$CI_JOB_ID'"
         }'
   only:
     - main
@@ -320,16 +327,21 @@ Or use `/webhook/artifact-deploy/nowait` if you don't want the pipeline to wait 
       curl -X POST https://your-server/webhook/artifact-deploy/nowait \
         -H "X-Deploy-Token: $SECURITY_TOKEN" \
         -H "Content-Type: application/json" \
-        -d '{"project_id":"'$CI_PROJECT_ID'","branch":"'$CI_COMMIT_REF_NAME'","job":"build"}'
+        -d '{"project_id":"'$CI_PROJECT_ID'","branch":"'$CI_COMMIT_REF_NAME'","job":"build","job_id":"'$CI_JOB_ID'"}'
 ```
 
 ### Request body
 
-| Field        | Type   | Default  | Description                                     |
-| ------------ | ------ | -------- | ----------------------------------------------- |
-| `project_id` | string | required | GitLab project ID (available as `$CI_PROJECT_ID`) |
-| `branch`     | string | `main`   | Branch name to fetch the artifact from           |
-| `job`        | string | `build`  | CI job name that produced the artifact           |
+| Field        | Type   | Default  | Description                                                          |
+| ------------ | ------ | -------- | -------------------------------------------------------------------- |
+| `project_id` | string | required | GitLab project ID (available as `$CI_PROJECT_ID`)                    |
+| `job_id`     | string | required | GitLab job ID that produced the artifact (`$CI_JOB_ID`)              |
+| `branch`     | string | `main`   | Branch name (informational — no longer used to build the API URL)    |
+| `job`        | string | `some`   | CI job name (informational)                                          |
+
+> **Breaking change from previous versions:** `job_id` is now required. The artifact is fetched from
+> `GET /api/v4/projects/{project_id}/jobs/{job_id}/artifacts` instead of
+> `GET /api/v4/projects/{project_id}/jobs/artifacts/{branch}/download?job={job}`.
 
 ### Artifact structure after extraction
 
@@ -417,8 +429,8 @@ The `.fraw` file is especially useful for debugging because it is written **line
 
 ```
 START: 2024-01-01 12:00:00
-[PRE][info] Downloading artifact — project: 42 | branch: main | job: build
-[PRE][info] URL: https://gitlab.com/api/v4/projects/42/jobs/artifacts/main/download?job=build
+[PRE][info] Downloading artifact — project: 42 | job_id: 9876 | job: build
+[PRE][info] URL: https://gitlab.com/api/v4/projects/42/jobs/9876/artifacts
 [PRE][info] Artifact downloaded successfully — 1234.5 KB (HTTP 200)
 [PRE][info] Extracting artifact to: /srv/deployer/artifact-deploy/extracted
 [PRE][info] Artifact extracted successfully
