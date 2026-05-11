@@ -1,0 +1,23 @@
+{
+    "schema": "https://box-project.github.io/box/configuration-schema.json",
+    "main": "bin/app.php",
+    "output": "dist/index.php",
+    "directories": ["src", "templates"],
+    "finder": [
+        {
+            "name": "*.php",
+            "in": "src"
+        },
+        {
+            "name": "*.latte",
+            "in": "templates"
+        }
+    ],
+    "compression": "NONE",
+    "php-scoper": false,
+    "exclude-composer-files": false,
+    "exclude-dev-files": true,
+    "dump-autoload": true,
+    "exclude-namespaces": [],
+    "shebang": false
+}

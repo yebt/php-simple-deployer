@@ -40,3 +40,5 @@ index.php.bak
 *.php.bak.*
 .self_update_version
 old/vendor
+/dist/
+backups/
