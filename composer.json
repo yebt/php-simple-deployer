@@ -16,12 +16,18 @@
         }
     ],
     "minimum-stability": "stable",
-    "require": {},
-    "require-dev": {},
+    "require-dev": {
+        "pestphp/pest": "^1.23"
+    },
     "scripts": {
         "start": [
             "Composer\\Config::disableProcessTimeout",
             "php -S localhost:5173 bin/app.php"
         ]
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
     }
 }
