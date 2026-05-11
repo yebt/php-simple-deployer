@@ -18,7 +18,8 @@
     "minimum-stability": "stable",
     "require-dev": {
         "pestphp/pest": "^1.23",
-        "symfony/var-dumper": "^5.4"
+        "symfony/var-dumper": "^5.4",
+        "bamarni/composer-bin-plugin": "^1.9"
     },
     "scripts": {
         "start": [
@@ -28,7 +29,8 @@
     },
     "config": {
         "allow-plugins": {
-            "pestphp/pest-plugin": true
+            "pestphp/pest-plugin": true,
+            "bamarni/composer-bin-plugin": true
         }
     },
     "require": {
