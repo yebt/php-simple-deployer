@@ -5,6 +5,9 @@
     "type": "project",
     "license": "MIT",
     "autoload": {
+        "files": [
+            "src/helpers.php"
+        ],
         "psr-4": {
             "Sphpd\\": "src/"
         }
@@ -25,7 +28,9 @@
     "require-dev": {
         "pestphp/pest": "^1.23",
         "symfony/var-dumper": "^5.4",
-        "bamarni/composer-bin-plugin": "^1.9"
+        "bamarni/composer-bin-plugin": "^1.9",
+        "friendsofphp/php-cs-fixer": "^3.95",
+        "php-cs-fixer/shim": "^3.9"
     },
     "scripts": {
         "start": [
@@ -34,7 +39,7 @@
         ],
         "test": "vendor/bin/pest",
         "build": "vendor-bin/box/vendor/bin/box compile",
-        "binx": "echo 'bin'"
+        "format": "vendor/bin/php-cs-fixer fix"
     },
     "config": {
         "allow-plugins": {
