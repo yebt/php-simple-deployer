@@ -319,20 +319,35 @@ class HealthAction
 
     private function resolveLogStatus(string $path): ?bool
     {
-        if (!file_exists($path)) {
-            return null;
-        }
-        $content = (string) file_get_contents($path);
-        if ('' === trim($content)) {
-            return null;
-        }
-        $lines = (array) preg_split('/\r\n|\r|\n/', trim($content));
-        $exitLine = $lines[count($lines) - 5] ?? end($lines) ?? '';
-        if ('' === $exitLine || false === $exitLine) {
+        // Prefer the .rlog sibling — it contains a deterministic footer line:
+        //   "=== DEPLOYMENT SUCCESS (Xs) ===" or "=== DEPLOYMENT FAILED at: … ==="
+        $base = (string) preg_replace('/\.log$/', '', $path);
+        $rlog = $base . '.rlog';
+
+        $source = file_exists($rlog) ? $rlog : $path;
+
+        if (!file_exists($source)) {
             return null;
         }
 
-        return false !== strpos($exitLine, 'EXIT: 0');
+        $content = (string) file_get_contents($source);
+        if ('' === trim($content)) {
+            return null;
+        }
+
+        // Scan the last ~10 lines for the footer
+        $lines = (array) preg_split('/\r\n|\r|\n/', trim($content));
+        $tail  = array_slice($lines, -10);
+        foreach (array_reverse($tail) as $line) {
+            if (false !== strpos($line, 'DEPLOYMENT SUCCESS')) {
+                return true;
+            }
+            if (false !== strpos($line, 'DEPLOYMENT FAILED') || false !== strpos($line, 'DEPLOYMENT FATAL')) {
+                return false;
+            }
+        }
+
+        return null; // still running or truncated
     }
 
     private function formatBytes(int $size): string
