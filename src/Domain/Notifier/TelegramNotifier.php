@@ -130,6 +130,18 @@ MARKDOWN;
         return $str;
     }
 
+    /**
+     * Escape only unescaped special MarkdownV2 characters in a message.
+     *
+     * Characters already preceded by '\' are left untouched, so intentional
+     * MarkdownV2 formatting (*bold*, _italic_, etc.) is preserved.
+     */
+    public function ensureEscaped(string $text): string
+    {
+        // Match any special char NOT preceded by a backslash.
+        return preg_replace('/(?<!\\\\)([_\*\[\]\(\)~`>#+=|\{\}\.!\-])/', '\\\\$1', $text);
+    }
+
     // ── Default curl transport ────────────────────────────────────────────────
 
     /** @param array<string, mixed> $payload */

@@ -32,10 +32,13 @@ class NotifyTestAction
         $formattedDate = $date->format('Y-m-d H:i:s');
         $dashboardUrl  = $protocol . $server . '/' . $returnTo;
 
+        $escapedDate = $this->notifier->escapeMarkdown($formattedDate);
+        $escapedHost = $this->notifier->escapeMarkdown($server);
+
         $message = "*System Check: SPHPD*\n\n"
-            . "*Host:* `$server`\n"
+            . "*Host:* `{$escapedHost}`\n"
             . "*Status:* `Operational`\n"
-            . "*Timestamp:* _{$formattedDate}_\n\n"
+            . "*Timestamp:* _{$escapedDate}_\n\n"
             . "[Ver Dashboard]($dashboardUrl)";
 
         $ok = $this->notifier->send($message);
