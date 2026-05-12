@@ -177,7 +177,27 @@ $router->setNotFound(function () use ($health): void {
     $health->validationError('Page not found.');
 });
 
-// ── Dispatch ──────────────────────────────────────────────────────────────────
+// ── CLI dispatch (background jobs launched by manual deploy) ─────────────────
+
+if (PHP_SAPI === 'cli' && isset($argv[1])) {
+    switch ($argv[1]) {
+        case 'run-deploy':
+            $host = $argv[2] ?? 'localhost';
+            $deployment->run($host);
+            exit(0);
+        case 'run-artifact-deploy':
+            $host      = $argv[2] ?? 'localhost';
+            $projectId = $argv[3] ?? '';
+            $branch    = $argv[4] ?? 'main';
+            $job       = $argv[5] ?? 'some';
+            $jobId     = $argv[6] ?? '';
+            $artifactDeployment->run($projectId, $job, $jobId, $branch);
+            exit(0);
+    }
+    exit(0);
+}
+
+// ── HTTP dispatch ─────────────────────────────────────────────────────────────
 
 $uri = $_SERVER['REQUEST_URI'] ?? '/';
 $router->resolve($uri);
