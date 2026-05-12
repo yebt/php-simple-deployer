@@ -5,7 +5,7 @@ services:
       dockerfile: Containerfile
     priviligied: true
     ports:
-      - "5173:80"
+      - "19090:80"
     volumes:
       - .:/var/www/html
     restart: unless-stopped
