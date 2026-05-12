@@ -104,6 +104,16 @@ test('TelegramNotifier: escapeMarkdown leaves plain text untouched', function ()
     expect($notifier->escapeMarkdown('hello world'))->toBe('hello world');
 });
 
+test('TelegramNotifier: escapeMarkdown escapes dash in date format', function () {
+    $notifier = new TelegramNotifier('t', 'c', null, '/tmp');
+
+    // Telegram MarkdownV2 rejects unescaped '-' in italic/text context.
+    $result = $notifier->escapeMarkdown('2026-05-12 10:56:18');
+
+    expect($result)->toBe('2026\-05\-12 10:56:18');
+    expect($result)->not->toContain('--');
+});
+
 // ── buildReport() ────────────────────────────────────────────────────────────
 
 test('TelegramNotifier: buildReport contains SUCCESS emoji and status', function () {
