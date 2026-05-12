@@ -1,0 +1,25 @@
+{**
+ * Single config check row — label + OK/??  badge.
+ *
+ * Parameters:
+ *   string      $label      — display label
+ *   bool        $ok         — whether the value is set/valid
+ *   string|null $detail     — optional detail text shown before badge
+ *   bool        $isDefault  — show "(DEFAULT)" tag when true
+ **}
+<div class="flex flex-row items-center justify-between gap-4 py-2 px-4">
+    <div class="flex items-center gap-1 min-w-0 text-[11px] text-slate-400 dark:text-slate-500 uppercase truncate">
+        {$label}
+        {if isset($detail) && $detail !== null}
+            <span class="text-slate-400 dark:text-slate-600 text-[10px] truncate max-w-[80px] lowercase ml-1">{$detail|escape}</span>
+        {/if}
+    </div>
+    <div class="flex items-center gap-1 shrink-0">
+        {if isset($isDefault) && $isDefault}
+            <span class="text-slate-400 dark:text-slate-600 font-bold tracking-tighter text-[10px]">(DEFAULT)</span>
+        {/if}
+        <span class="px-2 py-0.5 rounded font-bold text-[10px] {if $ok}bg-emerald-500/10 text-emerald-600 dark:text-emerald-500{else}bg-rose-500/10 text-rose-600 dark:text-rose-500{/if}">
+            {if $ok}OK{else}??{/if}
+        </span>
+    </div>
+</div>

@@ -1,0 +1,16 @@
+{**
+ * Self-update available banner.
+ *
+ * Parameters:
+ *   bool   $hasUpdate  — whether a newer version is available
+ *   string $returnTo   — route to return to after update (e.g. 'health2')
+ **}
+{if $hasUpdate}
+    {var $updateUrl = '/script/update?manual=1&return=' . rawurlencode($returnTo)}
+    <div class="mb-6 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 text-xs text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300">
+        A newer script version is available.
+        <a href="{$updateUrl|escape}"
+           onclick="return confirm('Download the latest script version and replace index.php?')"
+           class="font-bold underline underline-offset-2 hover:no-underline">Update now</a>.
+    </div>
+{/if}

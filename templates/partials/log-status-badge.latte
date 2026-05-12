@@ -1,0 +1,19 @@
+{**
+ * Inline status badge for a log entry.
+ *
+ * Parameters:
+ *   bool|null $status — true=OK, false=FAIL, null=unknown
+ **}
+{if $status === true}
+    <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-[10px] font-bold">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>OK
+    </span>
+{elseif $status === false}
+    <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-rose-100 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 text-[10px] font-bold">
+        <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>FAIL
+    </span>
+{else}
+    <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-500/10 text-slate-600 dark:text-slate-400 text-[10px] font-bold">
+        <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>???
+    </span>
+{/if}

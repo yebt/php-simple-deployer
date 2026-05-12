@@ -1,0 +1,41 @@
+{**
+ * Base layout — wraps every page.
+ *
+ * Parameters:
+ *   string $title          — <title> content
+ *   bool   $isRunning      — whether a deployment is in progress (triggers polling JS)
+ *   string $bodyClass      — optional extra classes for <body> (default: '')
+ *   string $extraHead      — optional raw HTML injected inside <head> (default: '')
+ **}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+    <title>{$title} — Deployer</title>
+
+    {* JetBrains Mono + Tailwind theme *}
+    <style>
+        @font-face {
+            font-family: 'JetBrains Mono Variable';
+            font-style: normal;
+            font-display: swap;
+            font-weight: 100 800;
+            src: url(https://cdn.jsdelivr.net/fontsource/fonts/jetbrains-mono:vf@latest/latin-wght-normal.woff2) format('woff2-variations');
+        }
+    </style>
+    <style type="text/tailwindcss">
+        @theme {
+            --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        }
+    </style>
+
+    {block head}{/block}
+</head>
+<body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-300 font-mono text-sm transition-colors duration-200 {$bodyClass ?? 'p-8'}">
+
+    {block content}{/block}
+
+</body>
+</html>
