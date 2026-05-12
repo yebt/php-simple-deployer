@@ -73,6 +73,9 @@ class TelegramNotifier
                 $result['body'],
                 json_encode($payload)
             );
+            if (!is_dir($this->logsPath)) {
+                mkdir($this->logsPath, 0755, true);
+            }
             file_put_contents($this->logsPath.'/telegram_errors.log', $entry, FILE_APPEND);
 
             return false;

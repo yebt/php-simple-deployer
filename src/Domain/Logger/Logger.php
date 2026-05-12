@@ -18,6 +18,10 @@ class Logger
     {
         $this->logsPath   = rtrim($logsPath, '/');
         $this->statusFile = $statusFile;
+
+        if (!is_dir($this->logsPath)) {
+            mkdir($this->logsPath, 0755, true);
+        }
     }
 
     // ── Log HTML wrapper ──────────────────────────────────────────────────────
