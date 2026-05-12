@@ -34,9 +34,13 @@ if (Phar::running() === '') {
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
-$config = new Config();
+$baseDir = Phar::running() !== ''
+    ? dirname($_SERVER['SCRIPT_FILENAME'] ?? __FILE__)
+    : (string) realpath(__DIR__ . '/..');
 
-$logsPath   = rtrim((string) ($config->get('logs_path') ?? './logs'), '/');
+$config = new Config(null, $baseDir);
+
+$logsPath   = rtrim((string) ($config->get('logs_path') ?? $baseDir . '/logs'), '/');
 $statusFile = $logsPath . '/.current_status';
 
 $security = new Security((string) ($config->get('secure_token') ?? ''));
