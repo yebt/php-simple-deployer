@@ -56,6 +56,7 @@ class Config
             'artifact_deploy_dir'    => $this->env($env, 'ARTIFACT_DEPLOY_DIR', __DIR__.'/../../artifact-deploy'),
             'artifact_instructions'  => $this->env($env, 'ARTIFACT_INSTRUCTIONS_FILE', 'artifact-deploy.json'),
             'dashboard_route'        => $this->env($env, 'DASHBOARD_ROUTE', 'health'),
+            'self_update_url'        => $this->env($env, 'SELF_UPDATE_URL', 'https://github.com/yebt/php-simple-deployer/releases/latest/download/index.php'),
         ];
     }
 

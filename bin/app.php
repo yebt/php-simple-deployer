@@ -22,6 +22,16 @@ use Sphpd\Support\SelfUpdater;
 
 require_once __DIR__ . '/../vendor/autoload.php';
 
+// ── Load .env (only outside PHAR — the PHAR ships without .env) ───────────────
+
+if (Phar::running() === '') {
+    $dotenvPath = __DIR__ . '/..';
+    if (file_exists($dotenvPath . '/.env')) {
+        $dotenv = Dotenv\Dotenv::createImmutable($dotenvPath);
+        $dotenv->load();
+    }
+}
+
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
 $config = new Config();
