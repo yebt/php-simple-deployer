@@ -74,3 +74,24 @@ test('ProcessRunner: timedOut is false for commands that complete in time', func
 
     expect($result['timedOut'])->toBeFalse();
 });
+
+test('ProcessRunner: large output arriving in multiple chunks is captured fully', function () {
+    // Generate output large enough to guarantee multiple pipe buffer flushes.
+    // 'yes' pipes ~64 KB chunks; limiting with head -n gives us a deterministic
+    // count while still exercising multi-callback accumulation in ProcessRunner.
+    $runner = new ProcessRunner();
+    $result = $runner->run('yes "x" | head -n 10000');
+
+    $lines = explode("\n", trim($result['stdout']));
+    expect(count($lines))->toBe(10000);
+    expect($result['exitCode'])->toBe(0);
+});
+
+test('ProcessRunner: exit code is correct even after large output', function () {
+    $runner = new ProcessRunner();
+    // Large output followed by a deliberate failure.
+    $result = $runner->run('yes "x" | head -n 5000; exit 7');
+
+    expect($result['exitCode'])->toBe(7);
+    expect($result['stdout'])->toContain('x');
+});
