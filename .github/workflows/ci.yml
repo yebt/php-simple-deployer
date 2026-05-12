@@ -32,6 +32,6 @@ jobs:
       # - name: Run tests
       #   run: php vendor/bin/pest
       - name: Tests
-        run: ./vendor/bin/pest
+        run: composer run test
 
 
