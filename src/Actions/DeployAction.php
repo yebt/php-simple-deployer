@@ -62,8 +62,9 @@ class DeployAction
         }
 
         if ($manual) {
-            $host = $this->host();
-            exec('php ' . escapeshellarg($this->entryScript) . ' run-deploy ' . escapeshellarg($host) . ' > /dev/null 2>&1 &');
+            $host      = $this->host();
+            $crashLog  = $this->logger->getLogsPath() . '/deploy_crash_' . date('Ymd_His') . '.log';
+            exec('php ' . escapeshellarg($this->entryScript) . ' run-deploy ' . escapeshellarg($host) . ' >> ' . escapeshellarg($crashLog) . ' 2>&1 &');
             usleep(300000);
             header('Location: /status/live');
             exit();
@@ -82,8 +83,9 @@ class DeployAction
             exit('Method Not Allowed');
         }
 
-        $host = $this->host();
-        exec('php ' . escapeshellarg($this->entryScript) . ' run-deploy ' . escapeshellarg($host) . ' > /dev/null 2>&1 &');
+        $host      = $this->host();
+        $crashLog  = $this->logger->getLogsPath() . '/deploy_crash_' . date('Ymd_His') . '.log';
+        exec('php ' . escapeshellarg($this->entryScript) . ' run-deploy ' . escapeshellarg($host) . ' >> ' . escapeshellarg($crashLog) . ' 2>&1 &');
 
         http_response_code(202);
         header('Content-Type: application/json');
@@ -245,6 +247,26 @@ class DeployAction
                     'log_file' => $status['log_file']  ?? '',
                 ], null);
                 break;
+            }
+
+            // Dead process guard — running=true but PID no longer exists → crashed
+            if (!empty($status['running']) && !empty($status['pid'])) {
+                $pid = (int) $status['pid'];
+                if ($pid > 0 && !file_exists("/proc/$pid")) {
+                    $this->sseEvent('log', ['text' => "\n[FATAL] Deploy process (PID $pid) died unexpectedly.\n"], null);
+                    $this->sseEvent('done', [
+                        'success'  => false,
+                        'duration' => 0,
+                        'log_file' => $status['log_file'] ?? '',
+                    ], null);
+                    // Mark status as finished so next page load doesn't get stuck
+                    $this->logger->updateLiveStatus([
+                        'running'  => false,
+                        'finished' => true,
+                        'success'  => false,
+                    ]);
+                    break;
+                }
             }
 
             // Idle timeout guard
