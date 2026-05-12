@@ -145,10 +145,15 @@ function copy(btn, text) {
                             <span class="w-2 h-2 bg-white rounded-full animate-ping"></span>View Process
                         </a>
                     {else}
-                        <a href="/webhook/deploy?manual=1"
-                           onclick="return confirm('Start deployment?')"
-                           class="block w-full text-center bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 py-2.5 rounded text-xs font-bold uppercase tracking-wider hover:opacity-90 transition">Deploy</a>
-                    {/if}
+                         <a href="/webhook/deploy?manual=1"
+                            onclick="return confirm('Start deployment?')"
+                            class="block w-full text-center bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 py-2.5 rounded text-xs font-bold uppercase tracking-wider hover:opacity-90 transition">Deploy</a>
+                     {/if}
+                     {if !$isProduction}
+                         <a href="/debugdeploy"
+                            onclick="return confirm('Run debug deploy?')"
+                            class="block w-full text-center border border-amber-500/40 text-amber-600 dark:text-amber-400 py-2.5 rounded text-xs font-bold uppercase tracking-wider hover:bg-amber-500/10 transition">Debug deploy</a>
+                     {/if}
                     <div class="pt-2 space-y-1">
                         {if $hasStatusData}
                             <a href="/status/live" class="flex items-center justify-center w-full py-2 rounded text-[11px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 transition">Last Result</a>

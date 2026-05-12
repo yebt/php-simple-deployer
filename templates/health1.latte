@@ -277,10 +277,15 @@ async function copyToClipboard(button, value) {
                             <span class="inline-block w-2 h-2 bg-white rounded-full"></span>Process running
                         </a>
                     {else}
-                        <a href="/webhook/deploy?manual=1"
-                           onclick="return confirm('Start deployment?')"
-                           class="block w-full text-center bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 py-3 rounded text-xs font-bold hover:opacity-90 transition uppercase tracking-[0.18em]">Manual deploy</a>
-                    {/if}
+                         <a href="/webhook/deploy?manual=1"
+                            onclick="return confirm('Start deployment?')"
+                            class="block w-full text-center bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 py-3 rounded text-xs font-bold hover:opacity-90 transition uppercase tracking-[0.18em]">Manual deploy</a>
+                     {/if}
+                     {if !$isProduction}
+                         <a href="/debugdeploy"
+                            onclick="return confirm('Run debug deploy?')"
+                            class="block w-full text-center border border-amber-500/40 text-amber-600 dark:text-amber-400 py-3 rounded text-xs font-bold hover:bg-amber-500/10 transition uppercase tracking-[0.18em]">Debug deploy</a>
+                     {/if}
                     {if $hasStatusData}
                         <a href="/status/live" class="block w-full text-center border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 py-3 rounded text-[11px] font-bold hover:bg-emerald-500/5 transition uppercase tracking-[0.18em]">View last result</a>
                     {/if}

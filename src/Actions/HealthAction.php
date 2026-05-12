@@ -118,6 +118,7 @@ class HealthAction
             'serverIp'                  => $_SERVER['SERVER_ADDR'] ?? 'Local',
             'serverDomain'              => $_SERVER['HTTP_HOST'] ?? 'Unknown',
             'phpVersion'                => PHP_VERSION,
+            'isProduction'              => getenv('APP_ENV') === 'production',
         ]);
     }
 
@@ -166,6 +167,7 @@ class HealthAction
             'hasUpdate'                 => $this->hasUpdate(),
             'hasStatusData'             => $status['hasData'],
             'serverDomain'              => $_SERVER['HTTP_HOST'] ?? 'Unknown',
+            'isProduction'              => getenv('APP_ENV') === 'production',
         ]);
     }
 
