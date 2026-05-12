@@ -13,33 +13,39 @@ use Sphpd\Domain\Notifier\TelegramNotifier;
 
 function makeDeployment(array $envOverrides = [], ?callable $runnerOverride = null): array
 {
-    $tmpDir      = sys_get_temp_dir().'/sphpd_dep_'.uniqid();
+    $tmpDir = sys_get_temp_dir().'/sphpd_dep_'.uniqid();
     mkdir($tmpDir);
-    $logsDir     = $tmpDir.'/logs';
+    $logsDir = $tmpDir.'/logs';
     mkdir($logsDir);
-    $projectDir  = $tmpDir.'/project';
+    $projectDir = $tmpDir.'/project';
     mkdir($projectDir);
-    $statusFile  = $tmpDir.'/status.json';
-    $instrFile   = $tmpDir.'/deploy.json';
+    $statusFile = $tmpDir.'/status.json';
+    $instrFile = $tmpDir.'/deploy.json';
 
     $env = array_merge([
-        'PROJECT_PATH'     => $projectDir,
+        'PROJECT_PATH' => $projectDir,
         'INSTRUCTIONS_FILE' => $instrFile,
-        'LOGS_PATH'        => $logsDir,
-        'SECURITY_TOKEN'   => '',
+        'LOGS_PATH' => $logsDir,
+        'SECURITY_TOKEN' => '',
     ], $envOverrides);
 
-    $config     = new Config($env);
-    $notifier   = new TelegramNotifier('', '', null, $logsDir); // no-op: empty token
-    $logger     = new Logger($logsDir, $statusFile);
+    $config = new Config($env);
+    $notifier = new TelegramNotifier('', '', null, $logsDir); // no-op: empty token
+    $logger = new Logger($logsDir, $statusFile);
     $instructions = new Instructions();
 
     // Swap ProcessRunner with a stub if provided
-    if ($runnerOverride !== null) {
+    if (null !== $runnerOverride) {
         $runner = new class($runnerOverride) extends ProcessRunner {
             private $fn;
-            public function __construct(callable $fn) { $this->fn = $fn; }
-            public function run(string $command, ?string $cwd = null, ?callable $onOutput = null): array {
+
+            public function __construct(callable $fn)
+            {
+                $this->fn = $fn;
+            }
+
+            public function run(string $command, ?string $cwd = null, ?callable $onOutput = null): array
+            {
                 return ($this->fn)($command, $cwd);
             }
         };

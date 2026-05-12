@@ -15,14 +15,16 @@ test('SelfUpdater: has_update is false when hashes match', function () {
     };
 
     $updater = new SelfUpdater('http://example.com', '/tmp', $scriptFile, 300, $downloader);
-    $status  = $updater->resolveStatus();
+    $status = $updater->resolveStatus();
 
     expect($status['has_update'])->toBeFalse();
 
     unlink($scriptFile);
     // clean cache
     $cacheFile = sys_get_temp_dir().'/sphpd_self_update_status_'.md5($scriptFile).'.json';
-    if (file_exists($cacheFile)) unlink($cacheFile);
+    if (file_exists($cacheFile)) {
+        unlink($cacheFile);
+    }
 });
 
 test('SelfUpdater: has_update is true when hashes differ', function () {
@@ -34,22 +36,25 @@ test('SelfUpdater: has_update is true when hashes differ', function () {
     };
 
     $updater = new SelfUpdater('http://example.com', '/tmp', $scriptFile, 300, $downloader);
-    $status  = $updater->resolveStatus();
+    $status = $updater->resolveStatus();
 
     expect($status['has_update'])->toBeTrue();
 
     unlink($scriptFile);
     $cacheFile = sys_get_temp_dir().'/sphpd_self_update_status_'.md5($scriptFile).'.json';
-    if (file_exists($cacheFile)) unlink($cacheFile);
+    if (file_exists($cacheFile)) {
+        unlink($cacheFile);
+    }
 });
 
 test('SelfUpdater: returns cached result within TTL without downloading', function () {
     $scriptFile = tempnam(sys_get_temp_dir(), 'sphpd_script_');
     file_put_contents($scriptFile, '<?php // old');
 
-    $callCount  = 0;
+    $callCount = 0;
     $downloader = function () use (&$callCount): string {
-        $callCount++;
+        ++$callCount;
+
         return '<?php // new';
     };
 
@@ -60,7 +65,7 @@ test('SelfUpdater: returns cached result within TTL without downloading', functi
     ]));
 
     $updater = new SelfUpdater('http://example.com', '/tmp', $scriptFile, 300, $downloader);
-    $status  = $updater->resolveStatus();
+    $status = $updater->resolveStatus();
 
     expect($callCount)->toBe(0);       // downloader not called
     expect($status['has_update'])->toBeFalse();
@@ -70,7 +75,7 @@ test('SelfUpdater: returns cached result within TTL without downloading', functi
 });
 
 test('SelfUpdater: cache is invalidated after update (has_update becomes false)', function () {
-    $tmpDir     = sys_get_temp_dir().'/sphpd_upd_'.uniqid();
+    $tmpDir = sys_get_temp_dir().'/sphpd_upd_'.uniqid();
     mkdir($tmpDir);
     $scriptFile = $tmpDir.'/index.php';
     file_put_contents($scriptFile, '<?php // old');
@@ -81,16 +86,18 @@ test('SelfUpdater: cache is invalidated after update (has_update becomes false)'
     };
 
     $backupDir = $tmpDir.'/backups';
-    $updater   = new SelfUpdater('http://example.com', $backupDir, $scriptFile, 300, $downloader);
+    $updater = new SelfUpdater('http://example.com', $backupDir, $scriptFile, 300, $downloader);
     $updater->update();
 
     $cacheFile = sys_get_temp_dir().'/sphpd_self_update_status_'.md5($scriptFile).'.json';
-    $cache     = json_decode(file_get_contents($cacheFile), true);
+    $cache = json_decode(file_get_contents($cacheFile), true);
 
     expect($cache['has_update'])->toBeFalse();
 
     // cleanup
-    foreach (glob($backupDir.'/*') as $f) unlink($f);
+    foreach (glob($backupDir.'/*') as $f) {
+        unlink($f);
+    }
     rmdir($backupDir);
     unlink($scriptFile);
     unlink($cacheFile);
@@ -98,7 +105,7 @@ test('SelfUpdater: cache is invalidated after update (has_update becomes false)'
 });
 
 test('SelfUpdater: update writes new content to script file', function () {
-    $tmpDir     = sys_get_temp_dir().'/sphpd_upd_'.uniqid();
+    $tmpDir = sys_get_temp_dir().'/sphpd_upd_'.uniqid();
     mkdir($tmpDir);
     $scriptFile = $tmpDir.'/index.php';
     file_put_contents($scriptFile, '<?php // old');
@@ -109,16 +116,20 @@ test('SelfUpdater: update writes new content to script file', function () {
     };
 
     $backupDir = $tmpDir.'/backups';
-    $updater   = new SelfUpdater('http://example.com', $backupDir, $scriptFile, 300, $downloader);
+    $updater = new SelfUpdater('http://example.com', $backupDir, $scriptFile, 300, $downloader);
     $updater->update();
 
     expect(file_get_contents($scriptFile))->toBe($newContent);
 
     // cleanup
-    foreach (glob($backupDir.'/*') as $f) unlink($f);
+    foreach (glob($backupDir.'/*') as $f) {
+        unlink($f);
+    }
     rmdir($backupDir);
     unlink($scriptFile);
     $cacheFile = sys_get_temp_dir().'/sphpd_self_update_status_'.md5($scriptFile).'.json';
-    if (file_exists($cacheFile)) unlink($cacheFile);
+    if (file_exists($cacheFile)) {
+        unlink($cacheFile);
+    }
     rmdir($tmpDir);
 });

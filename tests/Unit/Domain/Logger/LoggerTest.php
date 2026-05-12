@@ -87,11 +87,11 @@ test('Logger: logRequest appends multiple entries', function () {
 // ── directory auto-creation ───────────────────────────────────────────────────
 
 test('Logger: creates logs directory if it does not exist', function () {
-    $dir = sys_get_temp_dir() . '/sphpd_logger_mkdir_' . uniqid();
+    $dir = sys_get_temp_dir().'/sphpd_logger_mkdir_'.uniqid();
 
     expect(is_dir($dir))->toBeFalse();
 
-    new Logger($dir, $dir . '/status.json');
+    new Logger($dir, $dir.'/status.json');
 
     expect(is_dir($dir))->toBeTrue();
 

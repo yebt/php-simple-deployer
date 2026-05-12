@@ -19,12 +19,12 @@ class TelegramNotifier
     private ?string $threadId;
     private string $logsPath;
 
-    /** @var callable(string $url, array<string,mixed> $payload): array{code:int, body:string, error:string} */
+    /** @var callable(string, array<string,mixed>): array{code:int, body:string, error:string} */
     private $transport;
 
     /**
-     * @param callable|null $transport  Override for testing.
-     *                                  Signature: (string $url, array $payload): array{code, body, error}
+     * @param null|callable $transport Override for testing.
+     *                                 Signature: (string $url, array $payload): array{code, body, error}
      */
     public function __construct(
         string $botToken,
@@ -33,10 +33,10 @@ class TelegramNotifier
         string $logsPath,
         ?callable $transport = null
     ) {
-        $this->botToken  = $botToken;
-        $this->chatId    = $chatId;
-        $this->threadId  = $threadId;
-        $this->logsPath  = rtrim($logsPath, '/');
+        $this->botToken = $botToken;
+        $this->chatId = $chatId;
+        $this->threadId = $threadId;
+        $this->logsPath = rtrim($logsPath, '/');
         $this->transport = $transport ?? [$this, 'curlPost'];
     }
 
@@ -53,18 +53,18 @@ class TelegramNotifier
         $url = "https://api.telegram.org/bot{$this->botToken}/sendMessage";
 
         $payload = [
-            'chat_id'    => $this->chatId,
+            'chat_id' => $this->chatId,
             'parse_mode' => 'MarkdownV2',
-            'text'       => $text,
+            'text' => $text,
         ];
 
-        if ($this->threadId !== null) {
+        if (null !== $this->threadId) {
             $payload['message_thread_id'] = $this->threadId;
         }
 
         $result = ($this->transport)($url, $payload);
 
-        if ($result['code'] !== 200 || $result['body'] === false) {
+        if (200 !== $result['code'] || false === $result['body']) {
             $entry = sprintf(
                 "[%s] HTTP Code: %s | Error: %s | Response: %s | Params: %s\n",
                 date('Y-m-d H:i:s'),
@@ -104,7 +104,7 @@ class TelegramNotifier
             $errorOutput = "\n*Error Output:*\n```\n".$this->escapeMarkdown($errorOutput)."\n```";
         }
 
-        $status   = $success ? 'SUCCESS' : "FAILED at $failedTask";
+        $status = $success ? 'SUCCESS' : "FAILED at {$failedTask}";
         $duration = str_replace('.', '\.', (string) $duration);
 
         return <<<MARKDOWN
@@ -139,7 +139,7 @@ MARKDOWN;
     public function ensureEscaped(string $text): string
     {
         // Match any special char NOT preceded by a backslash.
-        return preg_replace('/(?<!\\\\)([_\*\[\]\(\)~`>#+=|\{\}\.!\-])/', '\\\\$1', $text);
+        return preg_replace('/(?<!\\\)([_\*\[\]\(\)~`>#+=|\{\}\.!\-])/', '\\\$1', $text);
     }
 
     // ── Default curl transport ────────────────────────────────────────────────
@@ -151,8 +151,8 @@ MARKDOWN;
         curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 
-        $body     = curl_exec($ch);
-        $error    = curl_error($ch);
+        $body = curl_exec($ch);
+        $error = curl_error($ch);
         $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 

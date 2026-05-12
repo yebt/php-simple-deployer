@@ -20,9 +20,10 @@ class ProcessRunner
     /**
      * Run a shell command and return a result array.
      *
-     * @param callable|null $onOutput  Called with (string $type, string $chunk) for every output chunk.
-     *                                  Use this for real-time streaming to a log file.
-     *                                  $type is 'out' or 'err'.
+     * @param null|callable $onOutput Called with (string $type, string $chunk) for every output chunk.
+     *                                Use this for real-time streaming to a log file.
+     *                                $type is 'out' or 'err'.
+     *
      * @return array{stdout: string, stderr: string, exitCode: int, timedOut: bool}
      */
     public function run(string $command, ?string $cwd = null, ?callable $onOutput = null): array
@@ -30,31 +31,31 @@ class ProcessRunner
         $process = Process::fromShellCommandline($command, $cwd);
         $process->setTimeout($this->timeout);
 
-        $stdout   = '';
-        $stderr   = '';
+        $stdout = '';
+        $stderr = '';
         $timedOut = false;
 
         try {
             $process->run(function (string $type, string $buffer) use (&$stdout, &$stderr, $onOutput) {
-                if ($type === Process::OUT) {
+                if (Process::OUT === $type) {
                     $stdout .= $buffer;
                 } else {
                     $stderr .= $buffer;
                 }
-                if ($onOutput !== null) {
-                    $onOutput($type === Process::OUT ? 'out' : 'err', $buffer);
+                if (null !== $onOutput) {
+                    $onOutput(Process::OUT === $type ? 'out' : 'err', $buffer);
                 }
             });
         } catch (ProcessTimedOutException $e) {
             $timedOut = true;
-            if ($onOutput !== null) {
+            if (null !== $onOutput) {
                 $onOutput('err', "[TIMEOUT] Command exceeded {$this->timeout}s limit\n");
             }
         }
 
         return [
-            'stdout'   => $stdout,
-            'stderr'   => $stderr,
+            'stdout' => $stdout,
+            'stderr' => $stderr,
             'exitCode' => $timedOut ? 124 : $process->getExitCode(),
             'timedOut' => $timedOut,
         ];

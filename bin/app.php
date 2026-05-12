@@ -20,28 +20,33 @@ use Sphpd\Domain\Logger\Logger;
 use Sphpd\Domain\Notifier\TelegramNotifier;
 use Sphpd\Support\SelfUpdater;
 
-require_once __DIR__ . '/../vendor/autoload.php';
+require_once __DIR__.'/../vendor/autoload.php';
 
 // ── Load .env (only outside PHAR — the PHAR ships without .env) ───────────────
 
-if (Phar::running() === '') {
-    $dotenvPath = __DIR__ . '/..';
-    if (file_exists($dotenvPath . '/.env')) {
+if ('' === Phar::running()) {
+    $dotenvPath = __DIR__.'/..';
+    if (file_exists($dotenvPath.'/.env')) {
         $dotenv = Dotenv\Dotenv::createImmutable($dotenvPath);
         $dotenv->load();
     }
 }
 
+//
+// Try resolve some var that need __DIR__
+define('ROOT_PATH', dirname(__DIR__));
+/* define('PROJECT_PATH', realpath(env('PROJECT_PATH', ''))); */
+
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
-$baseDir = Phar::running() !== ''
+$baseDir = '' !== Phar::running()
     ? dirname($_SERVER['SCRIPT_FILENAME'] ?? __FILE__)
-    : (string) realpath(__DIR__ . '/..');
+    : (string) realpath(__DIR__.'/..');
 
 $config = new Config(null, $baseDir);
 
-$logsPath   = rtrim((string) ($config->get('logs_path') ?? $baseDir . '/logs'), '/');
-$statusFile = $logsPath . '/.current_status';
+$logsPath = rtrim((string) ($config->get('logs_path') ?? $baseDir.'/logs'), '/');
+$statusFile = $logsPath.'/.current_status';
 
 $security = new Security((string) ($config->get('secure_token') ?? ''));
 
@@ -50,12 +55,13 @@ $user = $_SERVER['PHP_AUTH_USER'] ?? '';
 $pass = $_SERVER['PHP_AUTH_PW'] ?? '';
 $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
 
-if ($user && $pass && ($method === 'GET' || $method === 'POST')) {
+if ($user && $pass && ('GET' === $method || 'POST' === $method)) {
     // Basic auth present — accepted (real credential check lives in server config).
-} else if ($user || $pass) {
+} elseif ($user || $pass) {
     // Partial credentials — reject.
     http_response_code(401);
     header('WWW-Authenticate: Basic realm="Deployer"');
+
     exit('Unauthorized');
 }
 
@@ -97,27 +103,27 @@ $entryScript = $_SERVER['SCRIPT_FILENAME'] ?? __FILE__;
 
 $updater = new SelfUpdater(
     (string) ($config->get('self_update_url') ?? ''),
-    dirname($entryScript) . '/backups',
+    dirname($entryScript).'/backups',
     $entryScript
 );
 
 $pharRoot = Phar::running();
-$templatesDir = $pharRoot !== ''
-    ? $pharRoot . '/templates'
-    : __DIR__ . '/../templates';
+$templatesDir = '' !== $pharRoot
+    ? $pharRoot.'/templates'
+    : __DIR__.'/../templates';
 
 $view = new ViewRenderer(
     $templatesDir,
-    sys_get_temp_dir() . '/sphpd_latte_cache'
+    sys_get_temp_dir().'/sphpd_latte_cache'
 );
 
 // ── Actions ───────────────────────────────────────────────────────────────────
 
-$health  = new HealthAction($config, $view, $updater, []);
-$status  = new StatusAction($config);
-$log     = new LogAction($config);
-$deploy  = new DeployAction($config, $security, $deployment, $artifactDeployment, $logger, $entryScript);
-$notify  = new NotifyTestAction($config, $notifier);
+$health = new HealthAction($config, $view, $updater, []);
+$status = new StatusAction($config);
+$log = new LogAction($config);
+$deploy = new DeployAction($config, $security, $deployment, $artifactDeployment, $logger, $entryScript);
+$notify = new NotifyTestAction($config, $notifier);
 $selfUpd = new SelfUpdateAction($config, $security, $updater);
 
 // ── Router ────────────────────────────────────────────────────────────────────
@@ -125,50 +131,50 @@ $selfUpd = new SelfUpdateAction($config, $security, $updater);
 $router = new Router();
 
 // Status / live
-$router->add('/status/check',  [$status, 'check']);
-$router->add('/status/data',   [$status, 'data']);
-$router->add('/status/live',   [$health, 'liveStatus']);
+$router->add('/status/check', [$status, 'check']);
+$router->add('/status/data', [$status, 'data']);
+$router->add('/status/live', [$health, 'liveStatus']);
 $router->add('/status/stream', [$deploy, 'stream']);
-$router->add('/deploy/stop',   [$status, 'stop']);
+$router->add('/deploy/stop', [$status, 'stop']);
 
 // Dashboard / health views
 $router->add('/', [$health, 'home']);
-$router->add('/health',  [$health, 'health']);
+$router->add('/health', [$health, 'health']);
 $router->add('/health1', [$health, 'health1']);
 $router->add('/health2', [$health, 'health2']);
 
 // Logs
-$router->add('/alllogs',                         [$health, 'allLogs']);
-$router->add('/log/view',                        [$log, 'view']);
-$router->add('/log/last',                        [$log, 'last']);
-$router->add('/log/lasthtml',                    [$log, 'lastHtml']);
-$router->add('/log/lastfraw',                    [$log, 'lastFraw']);
-$router->add('/log/rview/([a-zA-Z0-9_]+)',       function (string $id) use ($log): void {
+$router->add('/alllogs', [$health, 'allLogs']);
+$router->add('/log/view', [$log, 'view']);
+$router->add('/log/last', [$log, 'last']);
+$router->add('/log/lasthtml', [$log, 'lastHtml']);
+$router->add('/log/lastfraw', [$log, 'lastFraw']);
+$router->add('/log/rview/([a-zA-Z0-9_]+)', function (string $id) use ($log): void {
     $log->rawView($id);
 });
-$router->add('/log/bview/([a-zA-Z0-9_]+)',       function (string $id) use ($log): void {
+$router->add('/log/bview/([a-zA-Z0-9_]+)', function (string $id) use ($log): void {
     $log->baseRawView($id);
 });
-$router->add('/log/htmlview/([a-zA-Z0-9_]+)',    function (string $id) use ($log): void {
+$router->add('/log/htmlview/([a-zA-Z0-9_]+)', function (string $id) use ($log): void {
     $log->htmlView($id);
 });
-$router->add('/log/frawview/([a-zA-Z0-9_]+)',    function (string $id) use ($log): void {
+$router->add('/log/frawview/([a-zA-Z0-9_]+)', function (string $id) use ($log): void {
     $log->frawView($id);
 });
 $router->add('/clear-history', [$log, 'clearHistory']);
 
 // Webhooks
-$router->add('/webhook/deploy',                  [$deploy, 'webhookDeploy']);
-$router->add('/webhook/deploy/nowait',           [$deploy, 'webhookDeployNoWait']);
-$router->add('/webhook/artifact-deploy',         [$deploy, 'webhookArtifactDeploy']);
-$router->add('/webhook/artifact-deploy/nowait',  [$deploy, 'webhookArtifactDeployNoWait']);
+$router->add('/webhook/deploy', [$deploy, 'webhookDeploy']);
+$router->add('/webhook/deploy/nowait', [$deploy, 'webhookDeployNoWait']);
+$router->add('/webhook/artifact-deploy', [$deploy, 'webhookArtifactDeploy']);
+$router->add('/webhook/artifact-deploy/nowait', [$deploy, 'webhookArtifactDeployNoWait']);
 
 // Misc
-$router->add('/test-notify',   $notify);
+$router->add('/test-notify', $notify);
 $router->add('/script/update', $selfUpd);
 
 // Debug (skip in production)
-if (getenv('APP_ENV') !== 'production') {
+if ('production' !== env('APP_ENV')) {
     $router->add('/debugdeploy', [$deploy, 'debugDeploy']);
 }
 
@@ -185,16 +191,20 @@ if (PHP_SAPI === 'cli' && isset($argv[1])) {
         case 'run-deploy':
             $host = $argv[2] ?? 'localhost';
             $deployment->run($host);
+
             exit(0);
+
         case 'run-artifact-deploy':
-            $host      = $argv[2] ?? 'localhost';
+            $host = $argv[2] ?? 'localhost';
             $projectId = $argv[3] ?? '';
-            $branch    = $argv[4] ?? 'main';
-            $job       = $argv[5] ?? 'some';
-            $jobId     = $argv[6] ?? '';
+            $branch = $argv[4] ?? 'main';
+            $job = $argv[5] ?? 'some';
+            $jobId = $argv[6] ?? '';
             $artifactDeployment->run($projectId, $job, $jobId, $branch);
+
             exit(0);
     }
+
     exit(0);
 }
 

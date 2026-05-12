@@ -42,7 +42,7 @@ test('Instructions: loads valid YAML string', function () {
 test('Instructions: returns error for invalid YAML', function () {
     $instructions = new Instructions();
 
-    $result = $instructions->loadFromYaml("key: [unclosed");
+    $result = $instructions->loadFromYaml('key: [unclosed');
 
     expect($result)->toHaveKey('error');
 });

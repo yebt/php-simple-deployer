@@ -31,7 +31,7 @@ test('TelegramNotifier: returns false and logs on non-200 response', function ()
     };
 
     $notifier = new TelegramNotifier('token123', 'chat1', null, $logDir, $transport);
-    $result   = $notifier->send('hello');
+    $result = $notifier->send('hello');
 
     expect($result)->toBeFalse();
     expect(file_exists($logDir.'/telegram_errors.log'))->toBeTrue();
@@ -65,6 +65,7 @@ test('TelegramNotifier: thread_id is included in payload when set', function () 
     $captured = [];
     $transport = function (string $url, array $payload) use (&$captured): array {
         $captured = $payload;
+
         return ['code' => 200, 'body' => '{"ok":true}', 'error' => ''];
     };
 
@@ -79,6 +80,7 @@ test('TelegramNotifier: thread_id is omitted when null', function () {
     $captured = [];
     $transport = function (string $url, array $payload) use (&$captured): array {
         $captured = $payload;
+
         return ['code' => 200, 'body' => '{"ok":true}', 'error' => ''];
     };
 
@@ -138,6 +140,7 @@ test('TelegramNotifier: send passes message as-is to transport', function () {
     $sent = [];
     $transport = function (string $url, array $payload) use (&$sent): array {
         $sent = $payload;
+
         return ['code' => 200, 'body' => '{"ok":true}', 'error' => ''];
     };
 
@@ -151,7 +154,7 @@ test('TelegramNotifier: send passes message as-is to transport', function () {
 
 test('TelegramNotifier: buildReport contains SUCCESS emoji and status', function () {
     $notifier = new TelegramNotifier('t', 'c', null, '/tmp');
-    $report   = $notifier->buildReport('myapp', true, 1.5, 'http://example.com/log');
+    $report = $notifier->buildReport('myapp', true, 1.5, 'http://example.com/log');
 
     expect($report)->toContain('✅');
     expect($report)->toContain('SUCCESS');
@@ -159,7 +162,7 @@ test('TelegramNotifier: buildReport contains SUCCESS emoji and status', function
 
 test('TelegramNotifier: buildReport contains FAILED and task name on failure', function () {
     $notifier = new TelegramNotifier('t', 'c', null, '/tmp');
-    $report   = $notifier->buildReport('myapp', false, 3.0, 'http://x.com', 'Build step');
+    $report = $notifier->buildReport('myapp', false, 3.0, 'http://x.com', 'Build step');
 
     expect($report)->toContain('❌');
     expect($report)->toContain('FAILED');

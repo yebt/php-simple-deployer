@@ -17,32 +17,32 @@ class NotifyTestAction
 
     public function __construct(Config $config, TelegramNotifier $notifier)
     {
-        $this->config   = $config;
+        $this->config = $config;
         $this->notifier = $notifier;
     }
 
     public function __invoke(): void
     {
-        $server   = $_SERVER['HTTP_HOST'] ?? 'localhost';
+        $server = $_SERVER['HTTP_HOST'] ?? 'localhost';
         $protocol = isset($_SERVER['HTTPS']) ? 'https://' : 'http://';
-        $route    = (string) $this->config->get('dashboard_route');
+        $route = (string) $this->config->get('dashboard_route');
         $returnTo = $_GET['return'] ?? $route;
 
         $date = new \DateTime('now', new \DateTimeZone('America/Bogota'));
         $formattedDate = $date->format('Y-m-d H:i:s');
-        $dashboardUrl  = $protocol . $server . '/' . $returnTo;
+        $dashboardUrl = $protocol.$server.'/'.$returnTo;
 
         $escapedDate = $this->notifier->escapeMarkdown($formattedDate);
         $escapedHost = $this->notifier->escapeMarkdown($server);
 
         $message = "*System Check: SPHPD*\n\n"
-            . "*Host:* `{$escapedHost}`\n"
-            . "*Status:* `Operational`\n"
-            . "*Timestamp:* _{$escapedDate}_\n\n"
-            . "[Ver Dashboard]($dashboardUrl)";
+            ."*Host:* `{$escapedHost}`\n"
+            ."*Status:* `Operational`\n"
+            ."*Timestamp:* _{$escapedDate}_\n\n"
+            ."[Ver Dashboard]({$dashboardUrl})";
 
         $ok = $this->notifier->send($message);
 
-        header('Location: /' . $returnTo . '?notified=' . ($ok ? '1' : '0'));
+        header('Location: /'.$returnTo.'?notified='.($ok ? '1' : '0'));
     }
 }
