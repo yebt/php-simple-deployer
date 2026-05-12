@@ -39,7 +39,7 @@ function makeDeployment(array $envOverrides = [], ?callable $runnerOverride = nu
         $runner = new class($runnerOverride) extends ProcessRunner {
             private $fn;
             public function __construct(callable $fn) { $this->fn = $fn; }
-            public function run(string $command, ?string $cwd = null): array {
+            public function run(string $command, ?string $cwd = null, ?callable $onOutput = null): array {
                 return ($this->fn)($command, $cwd);
             }
         };

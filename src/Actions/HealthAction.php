@@ -236,6 +236,14 @@ class HealthAction
     }
 
     /** Render validation error page */
+    public function notFound(): void
+    {
+        $dashboardUrl = '/' . (string) $this->config->get('dashboard_route');
+        $this->view->render('404.latte', [
+            'dashboardUrl' => $dashboardUrl,
+        ]);
+    }
+
     public function validationError(string $message): void
     {
         $dashboardUrl = '/' . (string) $this->config->get('dashboard_route');

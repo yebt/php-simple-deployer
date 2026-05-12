@@ -20,27 +20,36 @@ class ProcessRunner
     /**
      * Run a shell command and return a result array.
      *
+     * @param callable|null $onOutput  Called with (string $type, string $chunk) for every output chunk.
+     *                                  Use this for real-time streaming to a log file.
+     *                                  $type is 'out' or 'err'.
      * @return array{stdout: string, stderr: string, exitCode: int, timedOut: bool}
      */
-    public function run(string $command, ?string $cwd = null): array
+    public function run(string $command, ?string $cwd = null, ?callable $onOutput = null): array
     {
         $process = Process::fromShellCommandline($command, $cwd);
         $process->setTimeout($this->timeout);
 
-        $stdout = '';
-        $stderr = '';
+        $stdout   = '';
+        $stderr   = '';
         $timedOut = false;
 
         try {
-            $process->run(function (string $type, string $buffer) use (&$stdout, &$stderr) {
+            $process->run(function (string $type, string $buffer) use (&$stdout, &$stderr, $onOutput) {
                 if ($type === Process::OUT) {
                     $stdout .= $buffer;
                 } else {
                     $stderr .= $buffer;
                 }
+                if ($onOutput !== null) {
+                    $onOutput($type === Process::OUT ? 'out' : 'err', $buffer);
+                }
             });
         } catch (ProcessTimedOutException $e) {
             $timedOut = true;
+            if ($onOutput !== null) {
+                $onOutput('err', "[TIMEOUT] Command exceeded {$this->timeout}s limit\n");
+            }
         }
 
         return [
