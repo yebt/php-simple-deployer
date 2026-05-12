@@ -1,0 +1,30 @@
+{**
+ * 404 Not Found page.
+ *
+ * Parameters:
+ *   string $dashboardUrl
+ **}
+{layout 'layout/base.latte'}
+{var $title = '404 Not Found'}
+
+{block content}
+<div class="max-w-2xl mx-auto">
+    <div class="mt-8 bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-10 rounded-lg shadow-sm dark:shadow-xl text-center">
+        <div class="text-7xl font-black text-slate-200 dark:text-slate-800 mb-2 select-none">404</div>
+        <h1 class="text-lg font-bold text-slate-800 dark:text-slate-100 mb-2">Page not found</h1>
+        <p class="text-sm text-slate-500 dark:text-slate-400 mb-8">
+            The route you requested does not exist.
+        </p>
+        <div class="flex justify-center gap-3">
+            <a href="{$dashboardUrl}"
+               class="bg-slate-800 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 text-white px-5 py-2 rounded text-[11px] font-bold uppercase tracking-widest transition">
+                ← Dashboard
+            </a>
+            <button onclick="window.history.back()"
+                    class="border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 px-5 py-2 rounded text-[11px] font-bold uppercase tracking-widest transition">
+                Go Back
+            </button>
+        </div>
+    </div>
+</div>
+{/block}

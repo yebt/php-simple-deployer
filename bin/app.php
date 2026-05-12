@@ -174,7 +174,7 @@ if (getenv('APP_ENV') !== 'production') {
 // 404
 $router->setNotFound(function () use ($health): void {
     http_response_code(404);
-    $health->validationError('Page not found.');
+    $health->notFound();
 });
 
 // ── CLI dispatch (background jobs launched by manual deploy) ─────────────────
