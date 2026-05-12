@@ -175,12 +175,11 @@ function copy(btn, text) {
                         ['label' => 'Artifact Deploy',  'path' => '/webhook/artifact-deploy'],
                     ]}
                     {foreach $webhooks as $wh}
-                        {var $url = $baseUrl . $wh['path']}
                         <div class="px-4 py-3">
                             <div class="text-xs font-bold text-slate-900 dark:text-white mb-2">{$wh['label']}</div>
                             <div class="flex items-center gap-2">
-                                <code class="flex-1 text-[11px] text-slate-500 dark:text-slate-500 font-mono truncate bg-slate-100 dark:bg-slate-950 px-2 py-1 rounded">{$url|escape}</code>
-                                <button onclick="copy(this, {$url|escape|json_encode})"
+                                <code class="flex-1 text-[11px] text-slate-500 dark:text-slate-500 font-mono truncate bg-slate-100 dark:bg-slate-950 px-2 py-1 rounded">{$baseUrl}{$wh['path']}</code>
+                                <button onclick="copy(this, '{$baseUrl|noescape}{$wh['path']|noescape}')"
                                         class="shrink-0 px-3 py-1 rounded text-[10px] font-bold uppercase text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition">Copy</button>
                             </div>
                         </div>
