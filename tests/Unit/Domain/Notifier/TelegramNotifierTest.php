@@ -104,14 +104,47 @@ test('TelegramNotifier: escapeMarkdown leaves plain text untouched', function ()
     expect($notifier->escapeMarkdown('hello world'))->toBe('hello world');
 });
 
-test('TelegramNotifier: escapeMarkdown escapes dash in date format', function () {
+// ── ensureEscaped() ───────────────────────────────────────────────────────────
+
+test('TelegramNotifier: ensureEscaped escapes unescaped dash in date', function () {
     $notifier = new TelegramNotifier('t', 'c', null, '/tmp');
 
-    // Telegram MarkdownV2 rejects unescaped '-' in italic/text context.
-    $result = $notifier->escapeMarkdown('2026-05-12 10:56:18');
+    $result = $notifier->ensureEscaped('2026-05-12 10:56:18');
 
-    expect($result)->toBe('2026\-05\-12 10:56:18');
-    expect($result)->not->toContain('--');
+    expect($result)->toContain('\-');
+    expect($result)->not->toContain('1-');
+});
+
+test('TelegramNotifier: ensureEscaped does not double-escape already escaped chars', function () {
+    $notifier = new TelegramNotifier('t', 'c', null, '/tmp');
+
+    $result = $notifier->ensureEscaped('already\-escaped');
+
+    expect($result)->toBe('already\-escaped');
+});
+
+test('TelegramNotifier: ensureEscaped escapes unescaped special chars including formatting markers', function () {
+    $notifier = new TelegramNotifier('t', 'c', null, '/tmp');
+
+    // ensureEscaped cannot distinguish intentional formatting from literal chars —
+    // it escapes ALL unescaped special chars. Callers using MarkdownV2 formatting
+    // must pre-escape values and pass already-valid MarkdownV2 text.
+    $result = $notifier->ensureEscaped('*bold* and _italic_');
+
+    expect($result)->toBe('\*bold\* and \_italic\_');
+});
+
+test('TelegramNotifier: send passes message as-is to transport', function () {
+    $sent = [];
+    $transport = function (string $url, array $payload) use (&$sent): array {
+        $sent = $payload;
+        return ['code' => 200, 'body' => '{"ok":true}', 'error' => ''];
+    };
+
+    $notifier = new TelegramNotifier('token', 'chat1', null, '/tmp', $transport);
+    $notifier->send('date: 2026\-05\-12');
+
+    expect($sent['text'])->toBe('date: 2026\-05\-12');
 });
 
 // ── buildReport() ────────────────────────────────────────────────────────────
