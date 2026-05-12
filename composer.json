@@ -38,7 +38,7 @@
             "php -S localhost:19090 bin/app.php"
         ],
         "test": "vendor/bin/pest",
-        "build": "vendor-bin/box/vendor/bin/box compile",
+        "build": "vendor/box compile",
         "format": "vendor/bin/php-cs-fixer fix"
     },
     "config": {
