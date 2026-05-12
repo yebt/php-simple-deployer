@@ -164,12 +164,13 @@ class Deployment
 
         // Initialise status — broadcast rlog filename so SSE knows which file to tail
         $this->logger->updateLiveStatus([
-            'running' => true,
-            'pid' => getmypid(),
-            'task' => 'Starting…',
-            'index' => 0,
-            'total' => $totalTasks,
-            'log_file' => $baseName . '.rlog',
+            'running'    => true,
+            'pid'        => getmypid(),
+            'task'       => '',
+            'index'      => 0,
+            'total'      => $totalTasks,
+            'task_names' => array_values(array_map(function ($t) { return $t['name'] ?? ''; }, $tasks)),
+            'log_file'   => $baseName . '.rlog',
         ]);
 
         // Seed the rlog and structured log

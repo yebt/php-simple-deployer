@@ -237,10 +237,11 @@ class DeployAction
             // Always emit current status so the UI can update task progress
             if (!empty($status)) {
                 $this->sseEvent('status', [
-                    'running' => $status['running'] ?? false,
-                    'task' => $status['task'] ?? '',
-                    'index' => $status['index'] ?? 0,
-                    'total' => $status['total'] ?? 0,
+                    'running'    => $status['running']    ?? false,
+                    'task'       => $status['task']       ?? '',
+                    'index'      => $status['index']      ?? 0,
+                    'total'      => $status['total']      ?? 0,
+                    'task_names' => $status['task_names'] ?? [],
                 ], null);
             }
 
