@@ -436,8 +436,69 @@
                 .catch(function(err) { alert('Error: ' + err.message); });
         }
 
-        // ── Start ────────────────────────────────────────────────────────────
-        connectSSE();
+        // ── Bootstrap from persisted status, then connect SSE ───────────────
+
+        function bootstrapFromStatus(data) {
+            // Reconstruct task slots
+            if (data.task_names && data.task_names.length > 0) {
+                initTasks(data.task_names);
+            }
+
+            // Restore persisted outputs into taskOutputs
+            if (data.task_outputs && typeof data.task_outputs === 'object') {
+                var names = Object.keys(data.task_outputs);
+                for (var n = 0; n < names.length; n++) {
+                    var tname = names[n];
+                    taskOutputs[tname] = data.task_outputs[tname] || '';
+                }
+            }
+
+            // Restore task statuses
+            if (data.task_names) {
+                var currentIdx = data.index || 0;
+                for (var k = 0; k < data.task_names.length; k++) {
+                    var tn = data.task_names[k];
+                    if (k < currentIdx - 1) {
+                        taskStatus[tn] = 'success';
+                    } else if (k === currentIdx - 1 && data.running) {
+                        taskStatus[tn] = 'running';
+                        currentTask = tn;
+                        liveOutput  = taskOutputs[tn] || '';
+                    } else if (k === currentIdx - 1 && !data.running) {
+                        taskStatus[tn] = data.success ? 'success' : 'failed';
+                    }
+                    // else: remains 'pending'
+                }
+            }
+
+            // Restore progress UI
+            var task  = data.task  || '';
+            var index = data.index || 0;
+            var total = data.total || 0;
+            document.getElementById('current-task').textContent  = task || '\u2014';
+            document.getElementById('progress-text').textContent = index + '/' + total;
+            var pct = total > 0 ? (index / total) * 100 : 0;
+            document.getElementById('progress-bar').style.width  = pct + '%';
+
+            renderTasks();
+
+            // If already finished, call onDone to render banner + buttons
+            if (data.finished) {
+                onDone({
+                    success:  data.success,
+                    duration: data.duration || 0,
+                    log_file: data.log_file || ''
+                });
+                return; // no SSE needed
+            }
+
+            connectSSE();
+        }
+
+        fetch('/status/data')
+            .then(function(res) { return res.json(); })
+            .then(function(data) { bootstrapFromStatus(data); })
+            .catch(function()    { connectSSE(); }); // fallback: connect anyway
     </script>
 
 </body>

@@ -218,13 +218,14 @@ class Deployment
                 $result = $this->runner->run(
                     (string) $cmd,
                     $cwd,
-                    function (string $type, string $chunk) use ($rlogPath, &$cmdStdout, &$cmdStderr): void {
+                    function (string $type, string $chunk) use ($rlogPath, $taskName, &$cmdStdout, &$cmdStderr): void {
                         if ('out' === $type) {
                             $cmdStdout .= $chunk;
                         } else {
                             $cmdStderr .= $chunk;
                         }
                         $this->logger->appendRlog($rlogPath, $chunk);
+                        $this->logger->appendTaskOutput($taskName, $chunk);
                     }
                 );
 
