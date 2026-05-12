@@ -55,6 +55,25 @@ class Security
     }
 
     /**
+     * Convenience wrapper: validates the current HTTP request and terminates
+     * with 403 if not authorised.
+     *
+     * Reads from superglobals directly — call only inside HTTP context.
+     */
+    public function assertValid(): void
+    {
+        $headers  = static::headersFromServer($_SERVER);
+        $query    = $_GET;
+        $clientIp = $_SERVER['REMOTE_ADDR'] ?? null;
+        $isManual = isset($_GET['manual']) && $_GET['manual'] === '1';
+
+        if (!$this->isAuthorised($headers, $query, $clientIp, $isManual)) {
+            http_response_code(403);
+            exit('Forbidden');
+        }
+    }
+
+    /**
      * Build a normalised headers array from $_SERVER.
      *
      * Drop-in replacement for getallheaders() when that function is absent.
