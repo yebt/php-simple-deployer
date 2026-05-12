@@ -1,0 +1,329 @@
+{**
+ * Dashboard — /health1  (full featured layout)
+ *
+ * Parameters:
+ *   array      $config
+ *   array      $defaults
+ *   bool       $isRunning
+ *   bool|null  $lastLogStatus
+ *   bool       $instructionExists
+ *   bool       $artifactInstructionExists
+ *   bool       $systemReady
+ *   bool       $artifactReady
+ *   bool       $securityEnabled
+ *   int        $logsCount
+ *   string     $lastLogAt
+ *   string     $headlineStatusLabel
+ *   string     $headlineStatusClasses
+ *   string     $headlineDotClasses
+ *   array      $lastLogs              — up to 3 .log paths
+ *   array      $logStatuses           — [path => bool|null]
+ *   array      $logSizeLabels         — [path => string]
+ *   string     $baseUrl
+ *   string     $deployWebhookUrl
+ *   string     $artifactWebhookUrl
+ *   array|null $flash
+ *   bool       $hasUpdate
+ *   bool       $hasStatusData
+ *   string     $serverIp
+ *   string     $serverDomain
+ *   string     $phpVersion
+ **}
+{layout '../layout/base.latte'}
+{var $title = 'System Health'}
+
+{block head}
+<script>
+{if $isRunning}
+    const checkStatus = setInterval(async () => {
+        try {
+            const response = await fetch('/status/check');
+            const data = await response.json();
+            if (data.finished === true) { clearInterval(checkStatus); window.location.reload(); }
+        } catch (e) { console.error("Error checking status:", e); }
+    }, 2000);
+{/if}
+
+async function copyToClipboard(button, value) {
+    const originalText = button.dataset.originalText || button.textContent;
+    try {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(value);
+        } else {
+            const input = document.createElement('textarea');
+            input.value = value;
+            input.setAttribute('readonly','');
+            input.style.position = 'absolute';
+            input.style.left = '-9999px';
+            document.body.appendChild(input);
+            input.select();
+            document.execCommand('copy');
+            document.body.removeChild(input);
+        }
+        button.dataset.originalText = originalText;
+        button.textContent = 'Copied';
+        button.classList.add('bg-emerald-500','text-white','border-emerald-500');
+        setTimeout(() => {
+            button.textContent = originalText;
+            button.classList.remove('bg-emerald-500','text-white','border-emerald-500');
+        }, 1600);
+    } catch (error) { window.prompt('Copy this value:', value); }
+}
+</script>
+{/block}
+
+{block content}
+<div class="max-w-6xl mx-auto space-y-6">
+
+    {* Hero card *}
+    <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl overflow-hidden">
+        <div class="px-5 py-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+                <div class="flex flex-wrap items-center gap-3">
+                    <a href="/"><h1 class="text-slate-900 dark:text-white font-bold text-xl tracking-tighter uppercase">Simple PHP <span class="text-[#a855f7]">Deployer</span></h1></a>
+                    <span class="inline-flex items-center gap-2 border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] {$headlineStatusClasses}">
+                        <span class="inline-flex h-2 w-2 rounded-full {$headlineDotClasses}"></span>
+                        {$headlineStatusLabel|escape}
+                    </span>
+                </div>
+                <p class="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                    Dashboard operativo para ejecuciones manuales, webhooks y revisión rápida de actividad reciente.
+                </p>
+                <p class="mt-3 text-[11px] text-slate-400 dark:text-slate-500">
+                    Host: <span class="text-slate-600 dark:text-slate-400">{$serverDomain|escape}</span>
+                    &middot; IP: <span class="text-slate-600 dark:text-slate-400">{$serverIp|escape}</span>
+                    &middot; PHP: <span class="text-slate-600 dark:text-slate-400">{$phpVersion|escape}</span>
+                    &middot; Webhook: <span class="text-slate-600 dark:text-slate-400">{$config['webhook_method']|escape}</span>
+                </p>
+            </div>
+            {if $isRunning}
+                <a href="/status/live" class="bg-blue-600 text-white px-3 py-1 text-xs font-bold rounded shadow-lg shadow-blue-500/20 animate-pulse">PROCESS RUNNING</a>
+            {/if}
+        </div>
+
+        {include 'partials/flash.latte', flash: $flash}
+        {include 'partials/update-banner.latte', hasUpdate: $hasUpdate, returnTo: 'health1'}
+
+        {* Stats strip *}
+        <div class="grid grid-cols-2 lg:grid-cols-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30">
+            <div class="px-5 py-4 border-b lg:border-b-0 lg:border-r border-slate-100 dark:border-slate-800">
+                <div class="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">Logs</div>
+                <div class="mt-1 text-xl font-bold text-slate-900 dark:text-white">{$logsCount}</div>
+                <div class="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Historial total disponible</div>
+            </div>
+            <div class="px-5 py-4 border-b lg:border-b-0 lg:border-r border-slate-100 dark:border-slate-800">
+                <div class="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">Last result</div>
+                <div class="mt-1 text-sm font-bold
+                    {if $lastLogStatus === true}text-emerald-600 dark:text-emerald-400
+                    {elseif $lastLogStatus === false}text-amber-600 dark:text-amber-400
+                    {else}text-slate-900 dark:text-white{/if}">
+                    {if $lastLogStatus === true}Success{elseif $lastLogStatus === false}Failed{else}No executions{/if}
+                </div>
+                <div class="mt-1 text-[11px] text-slate-500 dark:text-slate-400">{$lastLogAt|escape}</div>
+            </div>
+            <div class="px-5 py-4 lg:border-r border-slate-100 dark:border-slate-800">
+                <div class="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">Deploy setup</div>
+                <div class="mt-1 text-sm font-bold {if $systemReady}text-emerald-600 dark:text-emerald-400{else}text-rose-600 dark:text-rose-400{/if}">
+                    {if $systemReady}Ready{else}Review required{/if}
+                </div>
+                <div class="mt-1 text-[11px] text-slate-500 dark:text-slate-400">{basename($config['instructions'])|escape}</div>
+            </div>
+            <div class="px-5 py-4">
+                <div class="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">Artifact setup</div>
+                <div class="mt-1 text-sm font-bold {if $artifactReady}text-emerald-600 dark:text-emerald-400{else}text-rose-600 dark:text-rose-400{/if}">
+                    {if $artifactReady}Ready{else}Review required{/if}
+                </div>
+                <div class="mt-1 text-[11px] text-slate-500 dark:text-slate-400">{basename($config['artifact_instructions'])|escape}</div>
+            </div>
+        </div>
+    </div>
+
+    {* Instruction alert *}
+    {if !$instructionExists}
+        <div class="bg-amber-100 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-500/50 p-4 rounded text-amber-700 dark:text-amber-200">
+            <span class="font-bold">ALERT:</span> Instruction file not found at "{$config['instructions']|escape}".
+        </div>
+    {/if}
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        {* Left: Webhooks + Recent logs + Example *}
+        <div class="lg:col-span-2 space-y-6">
+
+            {* Webhooks *}
+            <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl overflow-hidden">
+                <div class="px-5 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                        <h2 class="text-slate-900 dark:text-white text-sm font-bold uppercase tracking-[0.2em]">Webhook endpoints</h2>
+                        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">Copia las URLs públicas para integraciones de despliegue y artifacts.</p>
+                    </div>
+                    {if $securityEnabled}
+                        <div class="text-[11px] text-slate-500 dark:text-slate-400">
+                            Auth: <span class="text-slate-800 dark:text-slate-100 font-bold">X-Deploy-Token</span>
+                        </div>
+                    {/if}
+                </div>
+                <div class="grid grid-cols-1 xl:grid-cols-2 gap-3 p-5">
+                    {var $webhookCards = [
+                        ['title' => 'Call Deploy',     'description' => 'Webhook principal para ejecutar el despliegue estándar.',              'url' => $deployWebhookUrl,   'path' => '/webhook/deploy'],
+                        ['title' => 'Artifact Deploy', 'description' => 'Webhook para descargar, extraer y desplegar artifacts de GitLab.',     'url' => $artifactWebhookUrl, 'path' => '/webhook/artifact-deploy'],
+                    ]}
+                    {foreach $webhookCards as $card}
+                        <div class="border border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/20 p-4 space-y-3">
+                            <div class="flex items-start justify-between gap-3">
+                                <div>
+                                    <div class="text-sm font-bold text-slate-900 dark:text-white">{$card['title']}</div>
+                                    <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{$card['description']}</p>
+                                </div>
+                                <span class="border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-300">{$config['webhook_method']|escape}</span>
+                            </div>
+                            <div class="border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/60 p-3">
+                                <div class="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">URL</div>
+                                <div class="mt-2 break-all text-xs text-slate-700 dark:text-slate-200">{$card['url']|escape}</div>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <button type="button"
+                                        onclick="copyToClipboard(this, {$card['url']|json_encode})"
+                                        class="border border-slate-300 dark:border-slate-700 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+                                    Copy URL
+                                </button>
+                                <span class="text-[11px] text-slate-500 dark:text-slate-400">Path: <span class="text-slate-700 dark:text-slate-200">{$card['path']}</span></span>
+                            </div>
+                            {if $securityEnabled}
+                                <p class="text-[11px] text-slate-500 dark:text-slate-400">
+                                    Si el token está activo, envía <span class="font-bold text-slate-700 dark:text-slate-100">X-Deploy-Token</span>
+                                    o agrega <span class="font-bold text-slate-700 dark:text-slate-100">?token=...</span>.
+                                </p>
+                            {/if}
+                        </div>
+                    {/foreach}
+                </div>
+            </div>
+
+            {* Recent Logs *}
+            <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl overflow-hidden">
+                <div class="px-5 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                        <h2 class="text-slate-900 dark:text-white text-sm font-bold uppercase tracking-[0.2em]">Recent execution history</h2>
+                        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">Mostrando los 3 últimos logs.</p>
+                    </div>
+                    <a href="/alllogs" class="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold uppercase tracking-[0.18em] transition">View all logs</a>
+                </div>
+                <div class="p-5 space-y-3">
+                    {if !$lastLogs}
+                        <div class="border border-dashed border-slate-300 dark:border-slate-700 p-8 text-center text-sm text-slate-400 dark:text-slate-500">
+                            No execution history found.
+                        </div>
+                    {else}
+                        {foreach $lastLogs as $logPath}
+                            {var $fn      = basename($logPath)}
+                            {var $logName = pathinfo($fn, PATHINFO_FILENAME)}
+                            {var $isOk    = $logStatuses[$logPath] ?? null}
+                            {if $isOk === true}
+                                {var $statusLabel   = 'Success'}
+                                {var $statusClasses = 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'}
+                            {elseif $isOk === false}
+                                {var $statusLabel   = 'Failed'}
+                                {var $statusClasses = 'bg-rose-500/10 text-rose-600 dark:text-rose-400'}
+                            {else}
+                                {var $statusLabel   = 'Unknown'}
+                                {var $statusClasses = 'bg-slate-500/10 text-slate-600 dark:text-slate-400'}
+                            {/if}
+                            <div class="border border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/20 p-4">
+                                <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                                    <div class="space-y-1.5 min-w-0">
+                                        <div class="flex flex-wrap items-center gap-2">
+                                            <span class="px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] {$statusClasses}">{$statusLabel}</span>
+                                            <span class="text-[11px] text-slate-500 dark:text-slate-400">{date('Y-m-d H:i:s', filemtime($logPath))}</span>
+                                            <span class="text-[11px] text-slate-400 dark:text-slate-500">&bull;</span>
+                                            <span class="text-[11px] text-slate-500 dark:text-slate-400">{$logSizeLabels[$logPath] ?? ''}</span>
+                                        </div>
+                                        <div class="truncate text-sm font-bold text-slate-900 dark:text-white">{$fn|escape}</div>
+                                    </div>
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <a target="_blank" href="/log/rview/{urlencode($logName)}"    class="border border-slate-300 dark:border-slate-700 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition">Open</a>
+                                        <a target="_blank" href="/log/bview/{urlencode($logName)}"    class="border border-slate-300 dark:border-slate-700 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition">Raw</a>
+                                        <a target="_blank" href="/log/htmlview/{urlencode($logName)}" class="border border-slate-300 dark:border-slate-700 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition">HTML</a>
+                                    </div>
+                                </div>
+                            </div>
+                        {/foreach}
+                    {/if}
+                </div>
+                <div class="px-5 py-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30 flex flex-col gap-2 text-[11px] text-slate-500 dark:text-slate-400 sm:flex-row sm:items-center sm:justify-between">
+                    <span>{$logsCount} log file(s) available</span>
+                    <span>Use <span class="font-bold text-slate-700 dark:text-slate-200">/alllogs</span> for full browsing.</span>
+                </div>
+            </div>
+
+            {* Example *}
+            <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-5 rounded-lg shadow-sm dark:shadow-xl">
+                <h2 class="text-slate-900 dark:text-white text-sm font-bold mb-4 uppercase tracking-[0.2em]">Example deploy.json</h2>
+                <pre class="text-[11px] text-indigo-700 dark:text-indigo-300 overflow-x-auto bg-slate-50 dark:bg-slate-950 p-4 border border-slate-100 dark:border-slate-800">[
+  { "name": "Git Pull", "run": "git pull origin main" },
+  { "name": "Install Dependencies", "run": "composer install --no-dev" },
+  { "name": "Optimize Cache", "run": "php artisan config:cache" }
+]</pre>
+            </div>
+        </div>
+
+        {* Right: Quick Actions + Config *}
+        <div class="space-y-5">
+            <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-4 rounded-lg shadow-sm dark:shadow-xl">
+                <h2 class="text-slate-900 dark:text-white text-sm font-bold mb-4 uppercase tracking-[0.2em]">Quick actions</h2>
+                <div class="space-y-2">
+                    {if $isRunning}
+                        <a href="/status/live" class="flex items-center justify-center gap-2 w-full bg-blue-600 text-white py-3 rounded text-xs font-bold uppercase tracking-[0.18em] shadow-lg shadow-blue-500/20 animate-pulse">
+                            <span class="inline-block w-2 h-2 bg-white rounded-full"></span>Process running
+                        </a>
+                    {else}
+                        <a href="/webhook/deploy?manual=1"
+                           onclick="return confirm('Start deployment?')"
+                           class="block w-full text-center bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 py-3 rounded text-xs font-bold hover:opacity-90 transition uppercase tracking-[0.18em]">Manual deploy</a>
+                    {/if}
+                    {if $hasStatusData}
+                        <a href="/status/live" class="block w-full text-center border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 py-3 rounded text-[11px] font-bold hover:bg-emerald-500/5 transition uppercase tracking-[0.18em]">View last result</a>
+                    {/if}
+                    <a href="/test-notify" class="block w-full text-center border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 py-3 rounded text-xs transition uppercase tracking-[0.18em]">Test notification</a>
+                    <a href="/alllogs" class="block w-full text-center border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 py-3 rounded text-xs transition uppercase tracking-[0.18em]">All logs</a>
+                    <a href="/clear-history" onclick="return confirm('Clear all logs?')" class="block w-full text-center text-rose-500 hover:text-rose-400 py-2 text-xs transition uppercase tracking-[0.18em]">Clear history</a>
+                </div>
+            </div>
+
+            {* System config check *}
+            <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-5 rounded-lg shadow-sm dark:shadow-xl text-xs">
+                <h2 class="text-slate-900 dark:text-white font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-[0.2em]">System config</h2>
+                <div class="space-y-1 text-[11px]">
+                    {var $vars = ['Path' => 'project_path', 'Instructions file' => 'instructions', 'Logs path' => 'logs_path', 'Token' => 'bot_token', 'Security' => 'secure_token']}
+                    {foreach $vars as $label => $key}
+                        {var $isSet = !empty($config[$key])}
+                        {var $isDef = isset($defaults[strtoupper($key)]) && $config[$key] === $defaults[strtoupper($key)][0]}
+                        {include 'partials/config-check-row.latte', label: $label, ok: $isSet, isDefault: $isDef}
+                    {/foreach}
+                </div>
+            </div>
+
+            {* Artifact config check *}
+            <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-5 rounded-lg shadow-sm dark:shadow-xl text-xs">
+                <h2 class="text-slate-900 dark:text-white font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-[0.2em]">Artifact config</h2>
+                <div class="space-y-1 text-[11px]">
+                    {var $artifactRows = [
+                        ['label' => 'GitLab Token', 'ok' => !empty($config['gitlab_token'])],
+                        ['label' => 'Instructions',  'ok' => $artifactInstructionExists, 'detail' => basename($config['artifact_instructions'])],
+                        ['label' => 'Deploy Dir',    'ok' => !empty($config['artifact_deploy_dir'])],
+                        ['label' => 'GitLab URL',    'ok' => !empty($config['gitlab_base_url'])],
+                    ]}
+                    {foreach $artifactRows as $row}
+                        {include 'partials/config-check-row.latte', label: $row['label'], ok: $row['ok'], detail: $row['detail'] ?? null}
+                    {/foreach}
+                    {if !$artifactInstructionExists}
+                        <p class="text-rose-500 dark:text-rose-400 text-[10px] pt-1 break-all px-4">
+                            Not found: {$config['artifact_instructions']|escape}
+                        </p>
+                    {/if}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{/block}

@@ -1,0 +1,162 @@
+{**
+ * Dashboard — /health  (compact original layout)
+ *
+ * Parameters:
+ *   array      $config
+ *   array      $defaults
+ *   bool       $isRunning
+ *   bool       $instructionExists
+ *   bool       $artifactInstructionExists
+ *   array      $lastLogs              — up to 5 recent .log paths
+ *   array|null $flash
+ *   bool       $hasUpdate
+ *   string     $serverIp
+ *   string     $serverDomain
+ *   string     $phpVersion
+ **}
+{layout '../layout/base.latte'}
+{var $title = 'System Health'}
+
+{block head}
+<script>
+{if $isRunning}
+    const checkStatus = setInterval(async () => {
+        try {
+            const response = await fetch('/status/check');
+            const data = await response.json();
+            if (data.finished === true) { clearInterval(checkStatus); window.location.reload(); }
+        } catch (e) { console.error("Error checking status:", e); }
+    }, 2000);
+{/if}
+</script>
+{/block}
+
+{block content}
+<div class="max-w-6xl mx-auto">
+
+    {* Header *}
+    <div class="flex justify-between items-start mb-10">
+        <div>
+            <a href="/"><h1 class="text-slate-900 dark:text-white font-bold text-xl tracking-tighter uppercase">SIMPLE PHP <span class="text-[#a855f7]">DEPLOYER</span></h1></a>
+            <p class="text-slate-400 dark:text-slate-500">
+                Host: <span class="text-slate-600 dark:text-slate-400">{$serverDomain|escape}</span> |
+                IP: <span class="text-slate-600 dark:text-slate-400">{$serverIp|escape}</span> |
+                PHP: <span class="text-slate-600 dark:text-slate-400">{$phpVersion|escape}</span>
+            </p>
+        </div>
+        {if $isRunning}
+            <a href="/status/live" class="bg-blue-600 text-white px-3 py-1 text-xs font-bold rounded shadow-lg shadow-blue-500/20 animate-pulse">PROCESS RUNNING</a>
+        {/if}
+    </div>
+
+    {* Instruction alert *}
+    {if !$instructionExists}
+        <div class="bg-amber-100 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-500/50 p-4 rounded mb-8 text-amber-700 dark:text-amber-200">
+            <span class="font-bold">ALERT:</span> Instruction file not found at "{$config['instructions']|escape}".
+        </div>
+    {/if}
+
+    {include 'partials/flash.latte', flash: $flash}
+    {include 'partials/update-banner.latte', hasUpdate: $hasUpdate, returnTo: 'health'}
+
+    <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+
+        {* Sidebar: config checks *}
+        <div class="lg:col-span-1 space-y-4">
+            <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-5 rounded-lg shadow-sm dark:shadow-xl text-xs">
+                <h2 class="text-slate-400 dark:text-slate-500 font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">System Config</h2>
+                <div class="space-y-1 text-[11px]">
+                    {var $vars = ['Path' => 'project_path', 'Instructions file' => 'instructions', 'Logs path' => 'logs_path', 'Token' => 'bot_token', 'Security' => 'secure_token']}
+                    {foreach $vars as $label => $key}
+                        {var $isSet = !empty($config[$key])}
+                        {var $isDef = isset($defaults[strtoupper($key)]) && $config[$key] === $defaults[strtoupper($key)][0]}
+                        {include 'partials/config-check-row.latte', label: $label, ok: $isSet, isDefault: $isDef}
+                    {/foreach}
+                </div>
+            </div>
+
+            <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 p-5 rounded-lg shadow-sm dark:shadow-xl text-xs">
+                <h2 class="text-slate-400 dark:text-slate-500 font-bold mb-4 border-b border-slate-100 dark:border-slate-800 pb-2 uppercase tracking-widest">Artifact Config</h2>
+                <div class="space-y-1 text-[11px]">
+                    {var $artifactRows = [
+                        ['label' => 'GitLab Token', 'ok' => !empty($config['gitlab_token'])],
+                        ['label' => 'Instructions',  'ok' => $artifactInstructionExists, 'detail' => basename($config['artifact_instructions'])],
+                        ['label' => 'Deploy Dir',    'ok' => !empty($config['artifact_deploy_dir'])],
+                        ['label' => 'GitLab URL',    'ok' => !empty($config['gitlab_base_url'])],
+                    ]}
+                    {foreach $artifactRows as $row}
+                        {include 'partials/config-check-row.latte', label: $row['label'], ok: $row['ok'], detail: $row['detail'] ?? null}
+                    {/foreach}
+                    {if !$artifactInstructionExists}
+                        <p class="text-rose-500 dark:text-rose-400 text-[10px] pt-1 break-all px-4">
+                            Not found: {$config['artifact_instructions']|escape}
+                        </p>
+                    {/if}
+                </div>
+            </div>
+        </div>
+
+        {* Main area — actions + recent logs *}
+        <div class="lg:col-span-3 space-y-6">
+
+            {* Quick Actions *}
+            <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl overflow-hidden">
+                <div class="px-5 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
+                    <h2 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-500">Quick Actions</h2>
+                </div>
+                <div class="p-4 flex flex-wrap gap-2">
+                    {if $isRunning}
+                        <a href="/status/live" class="bg-blue-600 text-white px-4 py-2 text-xs font-bold rounded animate-pulse">View Process</a>
+                    {else}
+                        <a href="/webhook/deploy?manual=1"
+                           onclick="return confirm('Start deployment?')"
+                           class="bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 px-4 py-2 text-xs font-bold rounded hover:opacity-90 transition">Deploy</a>
+                    {/if}
+                    <a href="/test-notify?return=health" class="border border-slate-200 dark:border-slate-700 px-4 py-2 text-xs font-bold rounded hover:bg-slate-50 dark:hover:bg-slate-800 transition">Test Notify</a>
+                    <a href="/clear-history" onclick="return confirm('Clear all logs?')" class="border border-rose-200 dark:border-rose-500/30 text-rose-600 dark:text-rose-400 px-4 py-2 text-xs font-bold rounded hover:bg-rose-50 dark:hover:bg-rose-500/10 transition">Clear History</a>
+                    <a href="/alllogs" class="border border-slate-200 dark:border-slate-700 px-4 py-2 text-xs font-bold rounded hover:bg-slate-50 dark:hover:bg-slate-800 transition">All Logs</a>
+                </div>
+            </div>
+
+            {* Recent Logs *}
+            <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl overflow-hidden">
+                <div class="px-5 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 flex justify-between items-center">
+                    <h2 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-500">Recent Executions</h2>
+                    <a href="/alllogs" class="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold">View all →</a>
+                </div>
+                {if !$lastLogs}
+                    <div class="p-8 text-center text-slate-400 dark:text-slate-600 italic text-sm">No executions yet.</div>
+                {else}
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 text-[10px] uppercase">
+                                <th class="px-5 py-2 font-bold border-b border-slate-100 dark:border-slate-800">Status</th>
+                                <th class="px-5 py-2 font-bold border-b border-slate-100 dark:border-slate-800">File</th>
+                                <th class="px-5 py-2 font-bold border-b border-slate-100 dark:border-slate-800">Date</th>
+                                <th class="px-5 py-2 font-bold border-b border-slate-100 dark:border-slate-800 text-right">Open</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                            {foreach $lastLogs as $logPath}
+                                {var $fn    = basename($logPath)}
+                                {var $logId = pathinfo($fn, PATHINFO_FILENAME)}
+                                <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition">
+                                    <td class="px-5 py-3">
+                                        {include 'partials/log-status-badge.latte', status: $logStatuses[$logPath] ?? null}
+                                    </td>
+                                    <td class="px-5 py-3 text-xs font-mono text-slate-900 dark:text-white truncate max-w-[160px]">{$fn|escape}</td>
+                                    <td class="px-5 py-3 text-xs text-slate-400 dark:text-slate-600">{date('Y-m-d H:i', filemtime($logPath))}</td>
+                                    <td class="px-5 py-3 text-right">
+                                        <a href="/log/rview/{urlencode($logId)}" target="_blank"
+                                           class="inline-block px-3 py-1 rounded text-[10px] font-bold bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition">OPEN</a>
+                                    </td>
+                                </tr>
+                            {/foreach}
+                        </tbody>
+                    </table>
+                {/if}
+            </div>
+        </div>
+    </div>
+</div>
+{/block}

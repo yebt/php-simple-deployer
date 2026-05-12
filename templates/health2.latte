@@ -1,0 +1,242 @@
+{**
+ * Dashboard — /health2  (compact grid layout)
+ *
+ * Parameters:
+ *   array      $config
+ *   array      $systemChecks          — [{label, ok, detail?}]
+ *   array      $artifactChecks        — [{label, ok, detail?}]
+ *   array      $criticalIssues        — string[]
+ *   bool       $isRunning
+ *   bool|null  $lastLogStatus
+ *   bool       $artifactInstructionExists
+ *   int        $logsCount
+ *   string     $lastLogAt
+ *   array      $lastLogs              — up to 10 .log paths
+ *   array      $logStatuses           — [path => bool|null]
+ *   string     $baseUrl
+ *   array|null $flash
+ *   bool       $hasUpdate
+ *   string     $serverDomain
+ *   bool       $hasStatusData         — whether a status file exists at all
+ **}
+{layout '../layout/base.latte'}
+{var $title = 'System Health'}
+
+{block head}
+<script>
+{if $isRunning}
+    setInterval(async () => {
+        try { const res = await fetch('/status/check'); const data = await res.json(); if (data.finished) window.location.reload(); } catch (e) {}
+    }, 2000);
+{/if}
+function copy(btn, text) {
+    navigator.clipboard?.writeText(text).then(() => {
+        const original = btn.textContent;
+        btn.textContent = 'Copied!';
+        btn.classList.add('bg-emerald-100','text-emerald-700','dark:bg-emerald-500/20','dark:text-emerald-400');
+        setTimeout(() => { btn.textContent = original; btn.classList.remove('bg-emerald-100','text-emerald-700','dark:bg-emerald-500/20','dark:text-emerald-400'); }, 1500);
+    });
+}
+</script>
+{/block}
+
+{block content}
+<div class="max-w-6xl mx-auto">
+
+    {* Header *}
+    <header class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8 pb-6 border-b border-slate-200 dark:border-slate-800">
+        <div>
+            <a href="/"><h1 class="text-slate-900 dark:text-white font-bold text-xl tracking-tighter uppercase">Simple PHP <span class="text-[#a855f7]">Deployer</span></h1></a>
+            <div class="flex items-center gap-3 mt-2">
+                {if $isRunning}
+                    <span class="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">
+                        <span class="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>Running
+                    </span>
+                {elseif $lastLogStatus === true}
+                    <span class="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                        <span class="w-2 h-2 rounded-full bg-emerald-500"></span>Healthy
+                    </span>
+                {elseif $lastLogStatus === false}
+                    <span class="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400">
+                        <span class="w-2 h-2 rounded-full bg-rose-500"></span>Failed
+                    </span>
+                {else}
+                    <span class="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-500">
+                        <span class="w-2 h-2 rounded-full bg-slate-400"></span>Ready
+                    </span>
+                {/if}
+                <span class="text-xs text-slate-400 dark:text-slate-600">·</span>
+                <span class="text-xs text-slate-500 dark:text-slate-500">{$serverDomain|escape}</span>
+            </div>
+        </div>
+        <a href="/alllogs" class="text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-bold uppercase tracking-tighter">View all logs →</a>
+    </header>
+
+    {include 'partials/flash.latte', flash: $flash}
+    {include 'partials/update-banner.latte', hasUpdate: $hasUpdate, returnTo: 'health2'}
+
+    {* Critical Issues *}
+    {if $criticalIssues}
+        <div class="mb-6 space-y-2">
+            {foreach $criticalIssues as $issue}
+                <div class="flex items-center gap-3 px-4 py-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-500/20 text-rose-700 dark:text-rose-400 text-xs">
+                    <span class="font-bold">!</span>{$issue|escape}
+                </div>
+            {/foreach}
+        </div>
+    {/if}
+
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        {* Left: config + stats *}
+        <div class="lg:col-span-3 space-y-6">
+
+            {* System Config *}
+            <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl overflow-hidden">
+                <div class="px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
+                    <h2 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-500">System Config</h2>
+                </div>
+                <div class="divide-y divide-slate-100 dark:divide-slate-800">
+                    {foreach $systemChecks as $check}
+                        {include 'partials/config-check-row.latte', label: $check['label'], ok: $check['ok'], detail: $check['detail'] ?? null}
+                    {/foreach}
+                </div>
+            </div>
+
+            {* Artifact Config *}
+            <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl overflow-hidden">
+                <div class="px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
+                    <h2 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-500">Artifact Config</h2>
+                </div>
+                <div class="divide-y divide-slate-100 dark:divide-slate-800">
+                    {foreach $artifactChecks as $check}
+                        {include 'partials/config-check-row.latte', label: $check['label'], ok: $check['ok'], detail: $check['detail'] ?? null}
+                    {/foreach}
+                </div>
+            </div>
+
+            {* Stats *}
+            <div class="grid grid-cols-2 gap-3">
+                <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl p-4">
+                    <div class="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1">Logs</div>
+                    <div class="text-xl text-slate-900 dark:text-white font-bold">{$logsCount}</div>
+                </div>
+                <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl p-4">
+                    <div class="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1">Last</div>
+                    <div class="text-xl font-bold
+                        {if $lastLogStatus === true}text-emerald-600 dark:text-emerald-400
+                        {elseif $lastLogStatus === false}text-rose-600 dark:text-rose-400
+                        {else}text-slate-400 dark:text-slate-500{/if}">
+                        {if $lastLogStatus === true}OK{elseif $lastLogStatus === false}FAIL{else}-{/if}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {* Middle: Actions *}
+        <div class="lg:col-span-3 space-y-6">
+            <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl overflow-hidden">
+                <div class="px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
+                    <h2 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-500">Actions</h2>
+                </div>
+                <div class="p-4 space-y-2">
+                    {if $isRunning}
+                        <a href="/status/live" class="flex items-center justify-center gap-2 w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded text-xs font-bold uppercase tracking-wider transition animate-pulse">
+                            <span class="w-2 h-2 bg-white rounded-full animate-ping"></span>View Process
+                        </a>
+                    {else}
+                        <a href="/webhook/deploy?manual=1"
+                           onclick="return confirm('Start deployment?')"
+                           class="block w-full text-center bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 py-2.5 rounded text-xs font-bold uppercase tracking-wider hover:opacity-90 transition">Deploy</a>
+                    {/if}
+                    <div class="pt-2 space-y-1">
+                        {if $hasStatusData}
+                            <a href="/status/live" class="flex items-center justify-center w-full py-2 rounded text-[11px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 transition">Last Result</a>
+                        {/if}
+                        <a href="/test-notify?return=health2" class="flex items-center justify-center w-full py-2 rounded text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition">Test Notify</a>
+                        <a href="/clear-history" onclick="return confirm('Clear all logs?')" class="flex items-center justify-center w-full py-2 rounded text-[11px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-500/30 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition">Clear History</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {* Right: Webhooks + Recent Logs *}
+        <div class="lg:col-span-6 space-y-6">
+
+            {* Webhooks *}
+            <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl overflow-hidden">
+                <div class="px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 flex items-center justify-between">
+                    <h2 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-500">Webhook Endpoints</h2>
+                    <span class="text-[10px] font-bold text-slate-400 dark:text-slate-600 uppercase">{$config['webhook_method']|escape}</span>
+                </div>
+                <div class="divide-y divide-slate-100 dark:divide-slate-800">
+                    {var $webhooks = [
+                        ['label' => 'Standard Deploy',  'path' => '/webhook/deploy'],
+                        ['label' => 'Artifact Deploy',  'path' => '/webhook/artifact-deploy'],
+                    ]}
+                    {foreach $webhooks as $wh}
+                        {var $url = $baseUrl . $wh['path']}
+                        <div class="px-4 py-3">
+                            <div class="text-xs font-bold text-slate-900 dark:text-white mb-2">{$wh['label']}</div>
+                            <div class="flex items-center gap-2">
+                                <code class="flex-1 text-[11px] text-slate-500 dark:text-slate-500 font-mono truncate bg-slate-100 dark:bg-slate-950 px-2 py-1 rounded">{$url|escape}</code>
+                                <button onclick="copy(this, {$url|escape|json_encode})"
+                                        class="shrink-0 px-3 py-1 rounded text-[10px] font-bold uppercase text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition">Copy</button>
+                            </div>
+                        </div>
+                    {/foreach}
+                </div>
+                {if !empty($config['secure_token'])}
+                    <div class="px-4 py-2 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/30">
+                        <span class="text-[10px] text-slate-500 dark:text-slate-500">Auth: <code class="font-mono">X-Deploy-Token</code> header required</span>
+                    </div>
+                {/if}
+            </div>
+
+            {* Recent Logs *}
+            <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm dark:shadow-xl overflow-hidden">
+                <div class="px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 flex items-center justify-between">
+                    <h2 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-500">Recent Executions</h2>
+                    <span class="text-[10px] text-slate-400 dark:text-slate-600">Last 10</span>
+                </div>
+                {if !$lastLogs}
+                    <div class="p-8 text-center text-slate-400 dark:text-slate-600 italic text-sm">No executions yet</div>
+                {else}
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 text-[10px] uppercase">
+                                    <th class="px-4 py-2 font-bold border-b border-slate-100 dark:border-slate-800">Status</th>
+                                    <th class="px-4 py-2 font-bold border-b border-slate-100 dark:border-slate-800">Log File</th>
+                                    <th class="px-4 py-2 font-bold border-b border-slate-100 dark:border-slate-800 hidden sm:table-cell">Date</th>
+                                    <th class="px-4 py-2 font-bold border-b border-slate-100 dark:border-slate-800 text-right">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                                {foreach $lastLogs as $logPath}
+                                    {var $fn    = basename($logPath)}
+                                    {var $logId = pathinfo($fn, PATHINFO_FILENAME)}
+                                    <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition">
+                                        <td class="px-4 py-2.5">
+                                            {include 'partials/log-status-badge.latte', status: $logStatuses[$logPath] ?? null}
+                                        </td>
+                                        <td class="px-4 py-2.5">
+                                            <div class="text-xs font-mono text-slate-900 dark:text-white truncate max-w-[120px] sm:max-w-[180px]">{$fn|escape}</div>
+                                            <div class="sm:hidden text-[10px] text-slate-400 dark:text-slate-600">{date('M j, H:i', filemtime($logPath))}</div>
+                                        </td>
+                                        <td class="px-4 py-2.5 text-slate-500 dark:text-slate-500 text-xs hidden sm:table-cell">{date('M j, H:i', filemtime($logPath))}</td>
+                                        <td class="px-4 py-2.5 text-right">
+                                            <a href="/log/rview/{urlencode($logId)}" target="_blank"
+                                               class="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-bold uppercase bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition">Open</a>
+                                        </td>
+                                    </tr>
+                                {/foreach}
+                            </tbody>
+                        </table>
+                    </div>
+                {/if}
+            </div>
+        </div>
+    </div>
+</div>
+{/block}
