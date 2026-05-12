@@ -1,0 +1,20 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Containerfile
+    priviligied: true
+    ports:
+      - "19090:80"
+    volumes:
+      - .:/var/www/html:Z
+    restart: unless-stopped
+
+  # composer:
+  #   image: php:7.4-cli-alpine
+  #   working_dir: /app
+  #   volumes:
+  #     - .:/app:z
+  #   entrypoint: ["php", "/usr/bin/composer"]
+  #   environment:
+  #     - COMPOSER_HOME=/tmp/composer

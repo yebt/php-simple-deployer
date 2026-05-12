@@ -1,12 +1,56 @@
 {
+    "$schema": "https://getcomposer.org/schema.json",
+    "name": "yebt/php-simple-deployer",
+    "description": "A minimalist, single-file PHP deployment tool",
+    "type": "project",
+    "license": "MIT",
+    "autoload": {
+        "files": [
+            "src/helpers.php"
+        ],
+        "psr-4": {
+            "Sphpd\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Sphpd\\Tests\\": "tests/",
+            "Tests\\": "tests/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Yahir Eduardo Bravo",
+            "email": "yahir.eduardo.bravo@gmail.com"
+        }
+    ],
+    "minimum-stability": "stable",
+    "require-dev": {
+        "pestphp/pest": "^1.23",
+        "symfony/var-dumper": "^5.4",
+        "bamarni/composer-bin-plugin": "^1.9",
+        "friendsofphp/php-cs-fixer": "^3.95",
+        "php-cs-fixer/shim": "^3.9"
+    },
     "scripts": {
-        "mago": "vendor/bin/mago",
         "start": [
             "Composer\\Config::disableProcessTimeout",
-            "php -S localhost:5173"
-        ]
+            "php -S localhost:19090 bin/app.php"
+        ],
+        "test": "vendor/bin/pest",
+        "build": "vendor-bin/box/vendor/bin/box compile",
+        "format": "vendor/bin/php-cs-fixer fix"
     },
-    "require-dev": {
-        "carthage-software/mago": "^1.13.3"
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true,
+            "bamarni/composer-bin-plugin": true
+        }
+    },
+    "require": {
+        "latte/latte": "^2.11",
+        "symfony/yaml": "^5.4",
+        "symfony/process": "^5.4",
+        "vlucas/phpdotenv": "^5.6"
     }
 }
