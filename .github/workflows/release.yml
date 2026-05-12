@@ -30,8 +30,13 @@ jobs:
       - name: Tests
         run: composer run test
 
+      - name: Install Box
+        run: |
+          composer require --dev bamarni/composer-bin-plugin
+          composer bin box require --dev humbug/box
+
       - name: Build PHAR
-        run: vendor-bin/box/vendor/bin/box compile
+        run: box compile
 
       - name: Create GitHub Release and upload asset
         uses: softprops/action-gh-release@v2
@@ -40,3 +45,4 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
