@@ -1,10 +1,7 @@
 {
-    "schema": "https://box-project.github.io/box2/schema.json",
     "main": "bin/app.php",
     "output": "dist/index.php",
     "stub": false,
-    "banner": false,
-    "php-scoper-config": null,
     "directories": [
         "src",
         "templates"
