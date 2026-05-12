@@ -28,7 +28,7 @@ jobs:
       #   run: php vendor/bin/pest --colors=never
 
       - name: Tests
-        run: ./vendor/bin/pest --ci
+        run: ./vendor/bin/pest
 
       - name: Build PHAR
         run: vendor-bin/box/vendor/bin/box compile
