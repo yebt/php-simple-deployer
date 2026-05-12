@@ -24,15 +24,18 @@ jobs:
       - name: Install dependencies
         run: composer install --no-interaction --prefer-dist --optimize-autoloader
 
-      - name: Run tests
-        run: php vendor/bin/pest --colors=never
+      # - name: Run tests
+      #   run: php vendor/bin/pest --colors=never
+
+      - name: Tests
+        run: ./vendor/bin/pest --ci
 
       - name: Build PHAR
         run: vendor-bin/box/vendor/bin/box compile
 
       - name: Create GitHub Release and upload asset
         uses: softprops/action-gh-release@v2
-        with:
+        withrele:
           files: dist/index.php
           generate_release_notes: true
         env:

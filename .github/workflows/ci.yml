@@ -29,5 +29,9 @@ jobs:
       - name: Install dependencies
         run: composer install --no-interaction --prefer-dist --optimize-autoloader
 
-      - name: Run tests
-        run: php vendor/bin/pest --colors=never
+      # - name: Run tests
+      #   run: php vendor/bin/pest
+      - name: Tests
+        run: ./vendor/bin/pest --ci
+
+
