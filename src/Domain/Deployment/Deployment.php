@@ -53,8 +53,9 @@ class Deployment
         $projectPath      = $this->config->get('project_path');
         $instructionsFile = $this->config->get('instructions');
 
-        if (empty($projectPath) || !file_exists((string) $projectPath)) {
-            return 'Invalid or missing configuration: project_path';
+        $resolvedPath = realpath((string) $projectPath);
+        if (empty($projectPath) || $resolvedPath === false || !is_dir($resolvedPath)) {
+            return "Invalid or missing configuration: project_path \"$projectPath\" does not exist";
         }
 
         if (empty($instructionsFile)) {
@@ -103,6 +104,14 @@ class Deployment
             return $this->failure($result['error'], 0.0, $baseName . '.log');
         }
 
+        $projectPath = (string) $this->config->get('project_path');
+        $resolvedCwd = realpath($projectPath);
+        if ($resolvedCwd === false || !is_dir($resolvedCwd)) {
+            $msg = "project_path \"$projectPath\" does not exist or is not a directory";
+            $this->notifyFailure($host, 0.0, $logPath, '', $msg);
+            return $this->failure($msg, 0.0, $baseName . '.log');
+        }
+
         $tasks     = $result['tasks'];
         $startTime = microtime(true);
 
@@ -111,7 +120,7 @@ class Deployment
             $logPath,
             $rlogPath,
             $htmlPath,
-            (string) $this->config->get('project_path'),
+            $resolvedCwd,
             $host,
             $startTime,
             $baseName
