@@ -278,12 +278,15 @@ class HealthAction
     /** @return string[] */
     private function logFiles(): array
     {
-        $logs = glob((string) $this->config->get('logs_path').'/*.log') ?: [];
+        $logs = glob((string) $this->config->get('logs_path').'/deploy_*.log') ?: [];
+        $logs = array_filter($logs, function (string $f): bool {
+            return strpos(basename($f), 'deploy_crash_') === false;
+        });
         usort($logs, static function (string $a, string $b): int {
             return (int) filemtime($b) - (int) filemtime($a);
         });
 
-        return $logs;
+        return array_values($logs);
     }
 
     /** @return string[] */
