@@ -1,0 +1,341 @@
+{**
+ * Live deployment status page — /status/live
+ *
+ * Standalone page (no layout). Polls /status/data every second via JS.
+ *
+ * Params:
+ *   string $dashboardUrl  — URL to the dashboard (e.g. /health)
+ *   string $currentTask   — initial task name from status file
+ *   int    $index         — initial task index
+ *   int    $total         — total tasks
+ *   string $logFile       — current log file name (for View Log link)
+ **}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deploying — {$currentTask|noescape}</title>
+    <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+    <style>
+        @font-face {
+            font-family: 'JetBrains Mono Variable';
+            font-style: normal;
+            font-display: swap;
+            font-weight: 100 800;
+            src: url(https://cdn.jsdelivr.net/fontsource/fonts/jetbrains-mono:vf@latest/latin-wght-normal.woff2) format('woff2-variations');
+        }
+    </style>
+    <style type="text/tailwindcss">
+        @theme {
+            --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        }
+
+        .task-row { @apply border border-slate-800 rounded-lg overflow-hidden transition-all duration-200; }
+        .task-row.is-running { @apply border-blue-500/40 bg-blue-500/5; }
+        .task-row.is-failed  { @apply border-rose-500/30 bg-rose-500/5; }
+        .task-row.is-success { @apply border-emerald-500/20; }
+
+        .badge-wait    { @apply bg-slate-800 text-slate-500; }
+        .badge-running { @apply bg-blue-500/15 text-blue-400 border border-blue-500/40; }
+        .badge-success { @apply bg-emerald-500/15 text-emerald-400; }
+        .badge-failed  { @apply bg-rose-500/15 text-rose-400; }
+
+        @keyframes pulse-bar {
+            0%, 100% { opacity: 1; }
+            50%       { opacity: 0.6; }
+        }
+        .bar-running { animation: pulse-bar 2s ease-in-out infinite; }
+    </style>
+</head>
+
+<body class="bg-[#080c14] text-slate-400 min-h-screen font-mono antialiased">
+
+    {* ── Top bar ──────────────────────────────────────────────────────────── *}
+    <header class="border-b border-slate-800 px-6 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+            <span class="w-2 h-2 rounded-full bg-blue-500 animate-pulse" id="pulse-dot"></span>
+            <span class="text-[10px] uppercase tracking-[0.25em] text-slate-500">Live Deploy</span>
+        </div>
+        <a href="{$dashboardUrl}" class="text-[10px] uppercase tracking-widest text-slate-600 hover:text-slate-300 transition">
+            ← Exit
+        </a>
+    </header>
+
+    <main class="max-w-5xl mx-auto px-6 py-8 space-y-6">
+
+        {* ── Current task + progress ──────────────────────────────────────── *}
+        <section>
+            <p class="text-[10px] uppercase tracking-[0.2em] text-slate-600 mb-1">Running</p>
+            <h1 id="current-task" class="text-xl text-white font-bold tracking-tight truncate mb-4">
+                {$currentTask|noescape}
+            </h1>
+
+            {* Progress bar *}
+            <div class="flex items-center gap-3">
+                <div class="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                    <div id="progress-bar"
+                         class="h-full bg-blue-500 rounded-full transition-all duration-500 bar-running"
+                         style="width:{if $total > 0}{(($index - 1) / $total) * 100}{else}0{/if}%">
+                    </div>
+                </div>
+                <span id="progress-text" class="text-[11px] font-bold text-slate-500 tabular-nums w-12 text-right">
+                    {$index}/{$total}
+                </span>
+            </div>
+        </section>
+
+        {* ── Result banner (hidden until done) ───────────────────────────── *}
+        <div id="result-banner" class="hidden"></div>
+
+        {* ── Two columns: task list + terminal ───────────────────────────── *}
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+            {* Task list *}
+            <div class="flex flex-col gap-2">
+                <p class="text-[10px] uppercase tracking-[0.2em] text-slate-600 mb-1">Tasks</p>
+                <div id="task-list" class="space-y-1.5 overflow-y-auto max-h-[26rem] pr-1">
+                    <p class="text-[10px] text-slate-700 italic">Waiting for first update…</p>
+                </div>
+            </div>
+
+            {* Output terminal *}
+            <div class="flex flex-col gap-2">
+                <p class="text-[10px] uppercase tracking-[0.2em] text-slate-600 mb-1">Output</p>
+                <pre id="output-terminal"
+                     class="flex-1 h-[26rem] overflow-y-auto p-4 bg-slate-950 text-slate-300 text-[10px]
+                            rounded-lg border border-slate-800 font-mono whitespace-pre-wrap break-words
+                            leading-relaxed"></pre>
+            </div>
+
+        </div>
+
+        {* ── Footer actions ──────────────────────────────────────────────── *}
+        <footer class="flex items-center justify-between pt-4 border-t border-slate-800">
+            <p id="status-text" class="text-[9px] uppercase tracking-widest text-slate-700 italic animate-pulse">
+                Syncing with server…
+            </p>
+            <div id="action-buttons" class="flex items-center gap-3">
+                <button id="stop-button"
+                        onclick="stopDeployment()"
+                        class="hidden items-center gap-2 bg-rose-600 hover:bg-rose-500 text-white
+                               px-4 py-2 rounded text-[10px] font-bold uppercase tracking-widest transition">
+                    &#9209; Stop
+                </button>
+            </div>
+        </footer>
+
+    </main>
+
+    <script>
+        window.dashboardUrl   = {$dashboardUrl|json_encode};
+        window.initialLogFile = {$logFile|json_encode};
+    </script>
+    <script n:syntax="off">
+        const openCollapsibles = new Set();
+
+        // ── Helpers ──────────────────────────────────────────────────────────
+
+        function badgeFor(status) {
+            switch (status) {
+                case 'success': return ['DONE', 'badge-success'];
+                case 'failed':  return ['FAIL', 'badge-failed'];
+                case 'running': return ['BUSY', 'badge-running'];
+                default:        return ['WAIT', 'badge-wait'];
+            }
+        }
+
+        function rowClassFor(status) {
+            switch (status) {
+                case 'running': return 'is-running';
+                case 'failed':  return 'is-failed';
+                case 'success': return 'is-success';
+                default:        return '';
+            }
+        }
+
+        function escapeHtml(str) {
+            return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        }
+
+        // ── Render task list ─────────────────────────────────────────────────
+
+        function renderTasks(history) {
+            const container = document.getElementById('task-list');
+            container.innerHTML = '';
+
+            if (!history || history.length === 0) {
+                container.innerHTML = '<p class="text-[10px] text-slate-700 italic">No tasks yet…</p>';
+                return;
+            }
+
+            history.forEach((item, i) => {
+                const [label, badgeClass] = badgeFor(item.status);
+                const rowClass            = rowClassFor(item.status);
+                const toggleId            = `task-output-${i}`;
+                const isOpen              = openCollapsibles.has(toggleId);
+                const output              = escapeHtml(item.output || '');
+                const nameClass           = item.status === 'running'
+                    ? 'text-white font-bold'
+                    : item.status === 'pending'
+                        ? 'text-slate-600'
+                        : 'text-slate-400';
+
+                const bounceDots = item.status === 'running'
+                    ? `<span class="flex gap-0.5 ml-1">
+                            <span class="w-1 h-1 bg-blue-400 rounded-full animate-bounce"></span>
+                            <span class="w-1 h-1 bg-blue-400 rounded-full animate-bounce [animation-delay:0.15s]"></span>
+                            <span class="w-1 h-1 bg-blue-400 rounded-full animate-bounce [animation-delay:0.3s]"></span>
+                       </span>`
+                    : '';
+
+                container.innerHTML += `
+                    <div class="task-row ${rowClass}">
+                        <button
+                            onclick="toggleTask('${toggleId}')"
+                            class="w-full flex items-center justify-between px-3 py-2.5 hover:bg-white/5 transition text-left">
+                            <div class="flex items-center gap-2.5 min-w-0">
+                                <span class="shrink-0 text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-widest ${badgeClass}">
+                                    ${label}
+                                </span>
+                                <span class="text-[11px] truncate ${nameClass}">${escapeHtml(item.name)}</span>
+                                ${bounceDots}
+                            </div>
+                            <svg class="toggle-arrow shrink-0 w-3.5 h-3.5 text-slate-600 transition-transform ml-2 ${isOpen ? 'rotate-180' : ''}"
+                                 fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                            </svg>
+                        </button>
+                        <div id="${toggleId}" class="${isOpen ? '' : 'hidden'} border-t border-slate-800">
+                            <pre class="text-[10px] text-slate-400 bg-slate-950 p-3 overflow-x-auto max-h-48 overflow-y-auto font-mono whitespace-pre-wrap break-words leading-relaxed">${output || '(no output)'}</pre>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+        function toggleTask(id) {
+            const el  = document.getElementById(id);
+            const btn = el.previousElementSibling;
+            const arrow = btn.querySelector('.toggle-arrow');
+            el.classList.toggle('hidden');
+            arrow.classList.toggle('rotate-180');
+            if (el.classList.contains('hidden')) {
+                openCollapsibles.delete(id);
+            } else {
+                openCollapsibles.add(id);
+            }
+        }
+
+        // ── Poll /status/data ────────────────────────────────────────────────
+
+        async function updateStatus() {
+            try {
+                const response = await fetch('/status/data');
+                const data     = await response.json();
+
+                // Header
+                document.getElementById('current-task').textContent   = data.task || '—';
+                document.getElementById('progress-text').textContent  = `${data.index}/${data.total}`;
+
+                // Progress bar
+                const pct = (data.running || data.finished)
+                    ? (data.index / data.total) * 100
+                    : ((data.index - 1) / data.total) * 100;
+                const bar = document.getElementById('progress-bar');
+                bar.style.width = pct + '%';
+
+                // Stop button
+                const stopBtn = document.getElementById('stop-button');
+                stopBtn.classList.toggle('hidden', !data.running);
+                stopBtn.classList.toggle('flex',    data.running);
+
+                // Tasks
+                renderTasks(data.history);
+
+                // Terminal
+                const term = document.getElementById('output-terminal');
+                if (data.current_output) {
+                    term.textContent  = data.current_output;
+                    term.scrollTop    = term.scrollHeight;
+                }
+
+                // Status text
+                document.getElementById('status-text').textContent = data.running
+                    ? 'Executing instructions…'
+                    : 'Process halted.';
+
+                // Finished
+                if (data.finished) {
+                    // Stop bar animation
+                    bar.classList.remove('bar-running');
+                    bar.style.width = '100%';
+                    bar.classList.remove('bg-blue-500');
+                    bar.classList.add(data.success ? 'bg-emerald-500' : 'bg-rose-500');
+
+                    // Pulse dot
+                    const dot = document.getElementById('pulse-dot');
+                    dot.classList.remove('bg-blue-500', 'animate-pulse');
+                    dot.classList.add(data.success ? 'bg-emerald-500' : 'bg-rose-500');
+
+                    // Result banner
+                    const banner = document.getElementById('result-banner');
+                    banner.classList.remove('hidden');
+                    const successStyle = 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400';
+                    const failStyle    = 'bg-rose-500/10 border-rose-500/30 text-rose-400';
+                    banner.className = `p-4 rounded-lg border flex justify-between items-center text-[10px] font-bold uppercase tracking-widest ${data.success ? successStyle : failStyle}`;
+                    banner.innerHTML = `
+                        <span>${data.success ? '✓ Deployment Completed' : '✕ Deployment Failed'}</span>
+                        <span class="text-slate-500">Duration: ${data.duration}s</span>
+                    `;
+
+                    // Action buttons
+                    const logFile = data.log_file || window.initialLogFile;
+                    document.getElementById('action-buttons').innerHTML = `
+                        <a href="${window.dashboardUrl}"
+                           class="border border-slate-700 hover:border-slate-500 text-slate-300 px-4 py-2 rounded
+                                  text-[10px] font-bold uppercase tracking-widest hover:text-white transition">
+                            ← Dashboard
+                        </a>
+                        <a href="/log/view?file=${encodeURIComponent(logFile)}"
+                           class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded
+                                  text-[10px] font-bold uppercase tracking-widest transition">
+                            View Log →
+                        </a>
+                    `;
+
+                    // Status text
+                    document.getElementById('status-text').textContent = '';
+                    document.getElementById('status-text').classList.remove('animate-pulse');
+
+                    clearInterval(pollInterval);
+                }
+
+            } catch (err) {
+                console.error('Poll error:', err);
+            }
+        }
+
+        // ── Stop deployment ──────────────────────────────────────────────────
+
+        async function stopDeployment() {
+            if (!confirm('Stop the deployment?')) return;
+            try {
+                const res  = await fetch('/deploy/stop', { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    updateStatus();
+                } else {
+                    alert('Could not stop: ' + data.message);
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        const pollInterval = setInterval(updateStatus, 1000);
+        window.addEventListener('load', updateStatus);
+    </script>
+
+</body>
+</html>

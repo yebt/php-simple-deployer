@@ -218,14 +218,21 @@ class HealthAction
             exit();
         }
 
-        $liveFile = $logsPath . '/.live_status';
-        if (file_exists($liveFile)) {
-            header('Content-Type: text/html');
-            readfile($liveFile);
-            return;
-        }
+        $raw  = (string) file_get_contents($statusFile);
+        $data = json_decode($raw, true) ?? [];
 
-        echo '<pre>Waiting for status...</pre>';
+        $dashboardRoute = (string) ($this->config->get('dashboard_route') ?? 'health');
+        $protocol       = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+        $host           = $_SERVER['HTTP_HOST'] ?? 'localhost';
+        $dashboardUrl   = $protocol . '://' . $host . '/' . $dashboardRoute;
+
+        $this->view->render('live-status.latte', [
+            'dashboardUrl' => $dashboardUrl,
+            'currentTask'  => $data['task']     ?? 'Initializing…',
+            'index'        => (int) ($data['index'] ?? 0),
+            'total'        => (int) ($data['total'] ?? 0),
+            'logFile'      => $data['log_file']  ?? '',
+        ]);
     }
 
     /** Render validation error page */
