@@ -5,12 +5,16 @@ declare(strict_types=1);
 namespace Sphpd\Core;
 
 use Latte\Engine;
+use Latte\Loaders\FileLoader;
 
 /**
  * Thin wrapper around Latte\Engine.
  *
  * Resolves template paths relative to the templates/ directory and
  * renders to the output buffer.
+ *
+ * Setting a baseDir on FileLoader ensures {layout} and {include} directives
+ * resolve relative to that root — critical for PHAR compatibility.
  *
  * PHP 7.4 compatible.
  */
@@ -25,6 +29,7 @@ class ViewRenderer
 
         $this->latte = new Engine();
         $this->latte->setTempDirectory($cacheDir);
+        $this->latte->setLoader(new FileLoader($this->templatesDir));
     }
 
     /**
@@ -35,8 +40,7 @@ class ViewRenderer
      */
     public function render(string $template, array $params = []): void
     {
-        $path = $this->templatesDir . '/' . $template;
-        $this->latte->render($path, $params);
+        $this->latte->render($template, $params);
     }
 
     /**
@@ -47,7 +51,6 @@ class ViewRenderer
      */
     public function renderToString(string $template, array $params = []): string
     {
-        $path = $this->templatesDir . '/' . $template;
-        return $this->latte->renderToString($path, $params);
+        return $this->latte->renderToString($template, $params);
     }
 }
