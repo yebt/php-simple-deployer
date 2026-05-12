@@ -1,0 +1,28 @@
+{
+    "main": "bin/app.php",
+    "output": "dist/index.php",
+    "stub": false,
+    "directories": [
+        "src",
+        "templates"
+    ],
+    "files": [
+        "bin/app.php"
+    ],
+    "finder": [
+        {
+            "name": "*.php",
+            "in": "vendor",
+            "exclude": [
+                "Tests",
+                "tests",
+                "test",
+                "docs",
+                "doc"
+            ]
+        }
+    ],
+    "compression": "NONE",
+    "dump-autoload": true,
+    "exclude-composer-files": false
+}

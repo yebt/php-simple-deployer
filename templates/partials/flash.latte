@@ -1,0 +1,15 @@
+{**
+ * Flash message banner.
+ *
+ * Parameters:
+ *   array|null $flash — ['type' => 'success'|'error', 'message' => string]
+ **}
+{if $flash}
+    {var $isSuccess = ($flash['type'] === 'success')}
+    {var $classes = $isSuccess
+        ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
+        : 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-500/30 text-rose-700 dark:text-rose-300'}
+    <div class="mb-6 rounded-lg border px-4 py-3 text-xs {$classes}">
+        {$flash['message']|escape}
+    </div>
+{/if}

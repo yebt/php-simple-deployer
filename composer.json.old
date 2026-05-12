@@ -1,0 +1,42 @@
+{
+    "name": "yebt/php-simple-deployer",
+    "description": "A minimalist, single-file PHP deployment tool",
+    "type": "project",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.2",
+        "latte/latte": "^3.0",
+        "symfony/yaml": "^7.0",
+        "symfony/process": "^7.0"
+    },
+    "require-dev": {
+        "pestphp/pest": "^3.0",
+        "carthage-software/mago": "^1.13.3",
+        "humbug/box": "^4.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Sphpd\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Sphpd\\Tests\\": "tests/",
+            "Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "start": [
+            "Composer\\Config::disableProcessTimeout",
+            "php -S localhost:5173 bin/app.php"
+        ],
+        "test": "vendor/bin/pest",
+        "build": "vendor/bin/box compile",
+        "mago": "vendor/bin/mago"
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    }
+}
