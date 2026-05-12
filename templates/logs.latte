@@ -6,7 +6,7 @@
  *   array  $logs          — list of log file paths (sorted newest first)
  *   string $dashboardUrl
  **}
-{layout '../layout/base.latte'}
+{layout 'layout/base.latte'}
 {var $title = 'Logs'}
 
 {var $typeConfig = [
@@ -74,7 +74,7 @@
                             {var $viewUrl = $typeConfig[$type]['url_prefix'] . urlencode($id)}
                             <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition">
                                 <td class="px-6 py-4 text-xs">
-                                    {include '../partials/log-status-badge.latte', status: $logStatuses[$logPath] ?? null}
+                                    {include 'partials/log-status-badge.latte', status: $logStatuses[$logPath] ?? null}
                                     {$fn|escape}
                                 </td>
                                 <td class="px-6 py-4 text-slate-400 dark:text-slate-600 text-xs">

@@ -101,7 +101,7 @@ class HealthAction
             'systemReady'               => $systemReady,
             'artifactReady'             => $artifactReady,
             'securityEnabled'           => !empty($cfg['secure_token']),
-            'logsCount'                 => count($this->allLogs()),
+            'logsCount'                 => count($this->logFiles()),
             'lastLogAt'                 => $logs ? date('Y-m-d H:i:s', (int) filemtime($logs[0])) : 'No runs yet',
             'headlineStatusLabel'       => $headlineLabel,
             'headlineStatusClasses'     => $headlineClasses,
@@ -127,7 +127,7 @@ class HealthAction
         $cfg  = $this->config->all();
         $status = $this->statusData();
         $logs   = $this->recentLogs(10);
-        $allLogs = $this->allLogs();
+        $allLogs = $this->logFiles();
         $lastStatus = $allLogs ? $this->resolveLogStatus($allLogs[0]) : null;
 
         $criticalIssues = [];
@@ -255,7 +255,7 @@ class HealthAction
     }
 
     /** @return string[] */
-    private function allLogs(): array
+    private function logFiles(): array
     {
         $logs = glob((string) $this->config->get('logs_path') . '/*.log') ?: [];
         usort($logs, static function (string $a, string $b): int {
@@ -267,7 +267,7 @@ class HealthAction
     /** @return string[] */
     private function recentLogs(int $count): array
     {
-        return array_slice($this->allLogs(), 0, $count);
+        return array_slice($this->logFiles(), 0, $count);
     }
 
     /** @param string[] $paths */
