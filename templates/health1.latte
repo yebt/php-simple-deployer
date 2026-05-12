@@ -165,8 +165,8 @@ async function copyToClipboard(button, value) {
                 </div>
                 <div class="grid grid-cols-1 xl:grid-cols-2 gap-3 p-5">
                     {var $webhookCards = [
-                        ['title' => 'Call Deploy',     'description' => 'Webhook principal para ejecutar el despliegue estándar.',              'url' => $deployWebhookUrl,   'path' => '/webhook/deploy'],
-                        ['title' => 'Artifact Deploy', 'description' => 'Webhook para descargar, extraer y desplegar artifacts de GitLab.',     'url' => $artifactWebhookUrl, 'path' => '/webhook/artifact-deploy'],
+                        ['title' => 'Call Deploy',     'description' => 'Webhook principal para ejecutar el despliegue estándar.',          'url' => $deployWebhookUrl,   'path' => '/webhook/deploy'],
+                        ['title' => 'Artifact Deploy', 'description' => 'Webhook para descargar, extraer y desplegar artifacts de GitLab.', 'url' => $artifactWebhookUrl, 'path' => '/webhook/artifact-deploy'],
                     ]}
                     {foreach $webhookCards as $card}
                         <div class="border border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/20 p-4 space-y-3">
@@ -179,11 +179,11 @@ async function copyToClipboard(button, value) {
                             </div>
                             <div class="border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/60 p-3">
                                 <div class="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">URL</div>
-                                <div class="mt-2 break-all text-xs text-slate-700 dark:text-slate-200">{$card['url']|escape}</div>
+                                <div class="mt-2 break-all text-xs text-slate-700 dark:text-slate-200">{$card['url']|noescape}</div>
                             </div>
                             <div class="flex flex-wrap items-center gap-2">
                                 <button type="button"
-                                        onclick="copyToClipboard(this, {$card['url']|json_encode})"
+                                        onclick="copyToClipboard(this, '{$card['url']|noescape}')"
                                         class="border border-slate-300 dark:border-slate-700 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
                                     Copy URL
                                 </button>
