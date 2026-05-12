@@ -63,6 +63,31 @@ class Logger
         @chmod($this->statusFile, 0666);
     }
 
+    /**
+     * Append an output chunk to task_outputs[taskName] inside the status file.
+     * Called on every output line so the page can reconstruct state on load.
+     *
+     * @param string $taskName  — key inside task_outputs map
+     * @param string $chunk     — raw output chunk (stdout or stderr)
+     */
+    public function appendTaskOutput(string $taskName, string $chunk): void
+    {
+        $existing = [];
+        if (file_exists($this->statusFile)) {
+            $existing = json_decode((string) file_get_contents($this->statusFile), true) ?? [];
+        }
+        $outputs = isset($existing['task_outputs']) && is_array($existing['task_outputs'])
+            ? $existing['task_outputs']
+            : [];
+        $outputs[$taskName] = ($outputs[$taskName] ?? '') . $chunk;
+        $existing['task_outputs'] = $outputs;
+        file_put_contents(
+            $this->statusFile,
+            (string) json_encode($existing, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+        );
+        @chmod($this->statusFile, 0666);
+    }
+
     // ── Real-time raw log ─────────────────────────────────────────────────────
 
     /**
