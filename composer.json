@@ -30,7 +30,7 @@
     "scripts": {
         "start": [
             "Composer\\Config::disableProcessTimeout",
-            "php -S localhost:5173 bin/app.php"
+            "php -S localhost:19090 bin/app.php"
         ],
         "test": "vendor/bin/pest",
         "build": "vendor-bin/box/vendor/bin/box compile",
