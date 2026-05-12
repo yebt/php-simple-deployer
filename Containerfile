@@ -1,6 +1,7 @@
 FROM php:7.4-apache
 
 # System dependencies
+RUN apt-get update && apt upgrade -y
 RUN apt-get update && apt-get install -y --no-install-recommends \
     zip \
     unzip \
@@ -8,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libzip-dev \
     libonig-dev \
     && rm -rf /var/lib/apt/lists/*
+#RUN apt-get install -y 
 
 # PHP extensions
 RUN docker-php-ext-install \
