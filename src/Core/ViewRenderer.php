@@ -30,6 +30,9 @@ class ViewRenderer
         $this->latte = new Engine();
         $this->latte->setTempDirectory($cacheDir);
         $this->latte->setLoader(new FileLoader($this->templatesDir));
+        $this->latte->addFilter('json_encode', static function ($value, int $flags = JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES): string {
+            return (string) json_encode($value, $flags);
+        });
     }
 
     /**
