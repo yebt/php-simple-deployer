@@ -42,7 +42,7 @@ function makeArtifactDeployment(
         ? new class($runnerStub) extends ProcessRunner {
             private $fn;
             public function __construct(callable $fn) { $this->fn = $fn; }
-            public function run(string $command, ?string $cwd = null): array {
+            public function run(string $command, ?string $cwd = null, ?callable $onOutput = null): array {
                 return ($this->fn)($command, $cwd);
             }
           }
@@ -75,6 +75,17 @@ test('ArtifactDeployment: returns error when projectId is empty', function () {
 
     expect($result['success'])->toBeFalse();
     expect($result['error'])->toContain('projectId');
+
+    cleanupArtifact($dir);
+});
+
+test('ArtifactDeployment: returns error when jobId is empty', function () {
+    ['deployment' => $dep, 'tmpDir' => $dir] = makeArtifactDeployment();
+
+    $result = $dep->run('42', 'deploy', '');
+
+    expect($result['success'])->toBeFalse();
+    expect($result['error'])->toContain('jobId');
 
     cleanupArtifact($dir);
 });

@@ -1,21 +1,21 @@
 {**
  * Live deployment status page — /status/live
  *
- * Standalone page (no layout). Polls /status/data every second via JS.
+ * Standalone page (no layout). Streams /status/stream via SSE.
  *
  * Params:
- *   string $dashboardUrl  — URL to the dashboard (e.g. /health)
+ *   string $dashboardUrl  — URL to the dashboard (e.g. /health2)
  *   string $currentTask   — initial task name from status file
  *   int    $index         — initial task index
  *   int    $total         — total tasks
- *   string $logFile       — current log file name (for View Log link)
+ *   string $logFile       — current log file name (for View Log link after done)
  **}
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Deploying — {$currentTask|noescape}</title>
+    <title>Deploying…</title>
     <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
     <style>
         @font-face {
@@ -71,16 +71,15 @@
                 {$currentTask|noescape}
             </h1>
 
-            {* Progress bar *}
             <div class="flex items-center gap-3">
                 <div class="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
                     <div id="progress-bar"
                          class="h-full bg-blue-500 rounded-full transition-all duration-500 bar-running"
-                         style="width:{if $total > 0}{(($index - 1) / $total) * 100}{else}0{/if}%">
+                         style="width:0%">
                     </div>
                 </div>
                 <span id="progress-text" class="text-[11px] font-bold text-slate-500 tabular-nums w-12 text-right">
-                    {$index}/{$total}
+                    0/0
                 </span>
             </div>
         </section>
@@ -113,7 +112,7 @@
         {* ── Footer actions ──────────────────────────────────────────────── *}
         <footer class="flex items-center justify-between pt-4 border-t border-slate-800">
             <p id="status-text" class="text-[9px] uppercase tracking-widest text-slate-700 italic animate-pulse">
-                Syncing with server…
+                Connecting…
             </p>
             <div id="action-buttons" class="flex items-center gap-3">
                 <button id="stop-button"
@@ -127,87 +126,94 @@
 
     </main>
 
-    <script>
-        window.dashboardUrl   = {$dashboardUrl|json_encode};
-        window.initialLogFile = {$logFile|json_encode};
-    </script>
+    <div id="app-config"
+         data-dashboard-url="{$dashboardUrl}"
+         data-log-file="{$logFile}"
+         hidden></div>
+
     <script n:syntax="off">
-        const openCollapsibles = new Set();
+        // ── Bootstrap ────────────────────────────────────────────────────────
+        const _cfg          = document.getElementById('app-config').dataset;
+        const dashboardUrl  = _cfg.dashboardUrl;
+        let   logFile       = _cfg.logFile || '';
+
+        // Task state — keyed by task name, tracks accumulated output per task
+        const taskOutputs = {};  // { [taskName]: string }
+        const taskOrder   = [];  // ordered task names as they appear
+        const taskStatus  = {};  // { [taskName]: 'pending'|'running'|'success'|'failed' }
+        let   currentTask = '';
 
         // ── Helpers ──────────────────────────────────────────────────────────
 
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+
         function badgeFor(status) {
-            switch (status) {
-                case 'success': return ['DONE', 'badge-success'];
-                case 'failed':  return ['FAIL', 'badge-failed'];
-                case 'running': return ['BUSY', 'badge-running'];
-                default:        return ['WAIT', 'badge-wait'];
-            }
+            const map = {
+                success: ['DONE', 'badge-success'],
+                failed:  ['FAIL', 'badge-failed'],
+                running: ['BUSY', 'badge-running'],
+            };
+            return map[status] || ['WAIT', 'badge-wait'];
         }
 
         function rowClassFor(status) {
-            switch (status) {
-                case 'running': return 'is-running';
-                case 'failed':  return 'is-failed';
-                case 'success': return 'is-success';
-                default:        return '';
-            }
+            const map = { running: 'is-running', failed: 'is-failed', success: 'is-success' };
+            return map[status] || '';
         }
 
-        function escapeHtml(str) {
-            return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-        }
+        // ── Task list render ─────────────────────────────────────────────────
 
-        // ── Render task list ─────────────────────────────────────────────────
-
-        function renderTasks(history) {
+        function renderTasks() {
             const container = document.getElementById('task-list');
+            if (taskOrder.length === 0) return;
+
             container.innerHTML = '';
-
-            if (!history || history.length === 0) {
-                container.innerHTML = '<p class="text-[10px] text-slate-700 italic">No tasks yet…</p>';
-                return;
-            }
-
-            history.forEach((item, i) => {
-                const [label, badgeClass] = badgeFor(item.status);
-                const rowClass            = rowClassFor(item.status);
-                const toggleId            = `task-output-${i}`;
-                const isOpen              = openCollapsibles.has(toggleId);
-                const output              = escapeHtml(item.output || '');
-                const nameClass           = item.status === 'running'
+            taskOrder.forEach((name, i) => {
+                const status   = taskStatus[name] || 'pending';
+                const output   = taskOutputs[name] || '';
+                const [label, badgeClass] = badgeFor(status);
+                const rowClass = rowClassFor(status);
+                const toggleId = `task-output-${i}`;
+                const nameClass = status === 'running'
                     ? 'text-white font-bold'
-                    : item.status === 'pending'
-                        ? 'text-slate-600'
-                        : 'text-slate-400';
+                    : status === 'pending' ? 'text-slate-600' : 'text-slate-400';
 
-                const bounceDots = item.status === 'running'
+                const bounceDots = status === 'running'
                     ? `<span class="flex gap-0.5 ml-1">
-                            <span class="w-1 h-1 bg-blue-400 rounded-full animate-bounce"></span>
-                            <span class="w-1 h-1 bg-blue-400 rounded-full animate-bounce [animation-delay:0.15s]"></span>
-                            <span class="w-1 h-1 bg-blue-400 rounded-full animate-bounce [animation-delay:0.3s]"></span>
-                       </span>`
-                    : '';
+                           <span class="w-1 h-1 bg-blue-400 rounded-full animate-bounce"></span>
+                           <span class="w-1 h-1 bg-blue-400 rounded-full animate-bounce [animation-delay:0.15s]"></span>
+                           <span class="w-1 h-1 bg-blue-400 rounded-full animate-bounce [animation-delay:0.3s]"></span>
+                       </span>` : '';
+
+                // Preserve open state across re-renders
+                const wasOpen = document.getElementById(toggleId)
+                    ? !document.getElementById(toggleId).classList.contains('hidden')
+                    : status === 'running';
 
                 container.innerHTML += `
                     <div class="task-row ${rowClass}">
-                        <button
-                            onclick="toggleTask('${toggleId}')"
-                            class="w-full flex items-center justify-between px-3 py-2.5 hover:bg-white/5 transition text-left">
+                        <button onclick="toggleTask('${toggleId}')"
+                                class="w-full flex items-center justify-between px-3 py-2.5 hover:bg-white/5 transition text-left">
                             <div class="flex items-center gap-2.5 min-w-0">
                                 <span class="shrink-0 text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-widest ${badgeClass}">
                                     ${label}
                                 </span>
-                                <span class="text-[11px] truncate ${nameClass}">${escapeHtml(item.name)}</span>
+                                <span class="text-[11px] truncate ${nameClass}">${escapeHtml(name)}</span>
                                 ${bounceDots}
                             </div>
-                            <svg class="toggle-arrow shrink-0 w-3.5 h-3.5 text-slate-600 transition-transform ml-2 ${isOpen ? 'rotate-180' : ''}"
+                            <svg class="toggle-arrow shrink-0 w-3.5 h-3.5 text-slate-600 transition-transform ml-2 ${wasOpen ? 'rotate-180' : ''}"
                                  fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
                             </svg>
                         </button>
-                        <div id="${toggleId}" class="${isOpen ? '' : 'hidden'} border-t border-slate-800">
-                            <pre class="text-[10px] text-slate-400 bg-slate-950 p-3 overflow-x-auto max-h-48 overflow-y-auto font-mono whitespace-pre-wrap break-words leading-relaxed">${output || '(no output)'}</pre>
+                        <div id="${toggleId}" class="${wasOpen ? '' : 'hidden'} border-t border-slate-800">
+                            <pre class="text-[10px] text-slate-400 bg-slate-950 p-3 overflow-x-auto max-h-48 overflow-y-auto
+                                        font-mono whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(output) || '(no output yet)'}</pre>
                         </div>
                     </div>
                 `;
@@ -215,105 +221,175 @@
         }
 
         function toggleTask(id) {
-            const el  = document.getElementById(id);
-            const btn = el.previousElementSibling;
+            const el    = document.getElementById(id);
+            const btn   = el.previousElementSibling;
             const arrow = btn.querySelector('.toggle-arrow');
             el.classList.toggle('hidden');
             arrow.classList.toggle('rotate-180');
-            if (el.classList.contains('hidden')) {
-                openCollapsibles.delete(id);
-            } else {
-                openCollapsibles.add(id);
+        }
+
+        // ── Terminal append ──────────────────────────────────────────────────
+
+        function appendTerminal(text) {
+            const term      = document.getElementById('output-terminal');
+            const atBottom  = term.scrollHeight - term.scrollTop - term.clientHeight < 40;
+            term.textContent += text;
+            if (atBottom) term.scrollTop = term.scrollHeight;
+        }
+
+        function setTerminal(text) {
+            const term = document.getElementById('output-terminal');
+            term.textContent = text;
+            term.scrollTop   = term.scrollHeight;
+        }
+
+        // ── Handle SSE: status event ─────────────────────────────────────────
+
+        function onStatus(data) {
+            const task  = data.task  || '';
+            const index = data.index || 0;
+            const total = data.total || 0;
+
+            document.getElementById('current-task').textContent  = task || '—';
+            document.getElementById('progress-text').textContent = `${index}/${total}`;
+
+            const pct = total > 0 ? (index / total) * 100 : 0;
+            document.getElementById('progress-bar').style.width = pct + '%';
+
+            const stopBtn = document.getElementById('stop-button');
+            stopBtn.classList.toggle('hidden', !data.running);
+            stopBtn.classList.toggle('flex',    data.running);
+
+            document.getElementById('status-text').textContent = data.running
+                ? 'Executing instructions…'
+                : 'Process halted.';
+
+            // Register new task in state
+            if (task && task !== currentTask) {
+                // Mark previous task as done if not already
+                if (currentTask && taskStatus[currentTask] === 'running') {
+                    taskStatus[currentTask] = 'success';
+                }
+                currentTask = task;
+                if (!taskOutputs[task]) {
+                    taskOutputs[task] = '';
+                    taskOrder.push(task);
+                    taskStatus[task] = 'running';
+                }
+                renderTasks();
             }
         }
 
-        // ── Poll /status/data ────────────────────────────────────────────────
+        // ── Handle SSE: log event ────────────────────────────────────────────
 
-        async function updateStatus() {
-            try {
-                const response = await fetch('/status/data');
-                const data     = await response.json();
+        function onLog(data) {
+            const text = data.text || '';
+            if (!text) return;
 
-                // Header
-                document.getElementById('current-task').textContent   = data.task || '—';
-                document.getElementById('progress-text').textContent  = `${data.index}/${data.total}`;
+            // Append raw text to terminal
+            appendTerminal(text);
 
-                // Progress bar
-                const pct = (data.running || data.finished)
-                    ? (data.index / data.total) * 100
-                    : ((data.index - 1) / data.total) * 100;
-                const bar = document.getElementById('progress-bar');
-                bar.style.width = pct + '%';
-
-                // Stop button
-                const stopBtn = document.getElementById('stop-button');
-                stopBtn.classList.toggle('hidden', !data.running);
-                stopBtn.classList.toggle('flex',    data.running);
-
-                // Tasks
-                renderTasks(data.history);
-
-                // Terminal
-                const term = document.getElementById('output-terminal');
-                if (data.current_output) {
-                    term.textContent  = data.current_output;
-                    term.scrollTop    = term.scrollHeight;
-                }
-
-                // Status text
-                document.getElementById('status-text').textContent = data.running
-                    ? 'Executing instructions…'
-                    : 'Process halted.';
-
-                // Finished
-                if (data.finished) {
-                    // Stop bar animation
-                    bar.classList.remove('bar-running');
-                    bar.style.width = '100%';
-                    bar.classList.remove('bg-blue-500');
-                    bar.classList.add(data.success ? 'bg-emerald-500' : 'bg-rose-500');
-
-                    // Pulse dot
-                    const dot = document.getElementById('pulse-dot');
-                    dot.classList.remove('bg-blue-500', 'animate-pulse');
-                    dot.classList.add(data.success ? 'bg-emerald-500' : 'bg-rose-500');
-
-                    // Result banner
-                    const banner = document.getElementById('result-banner');
-                    banner.classList.remove('hidden');
-                    const successStyle = 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400';
-                    const failStyle    = 'bg-rose-500/10 border-rose-500/30 text-rose-400';
-                    banner.className = `p-4 rounded-lg border flex justify-between items-center text-[10px] font-bold uppercase tracking-widest ${data.success ? successStyle : failStyle}`;
-                    banner.innerHTML = `
-                        <span>${data.success ? '✓ Deployment Completed' : '✕ Deployment Failed'}</span>
-                        <span class="text-slate-500">Duration: ${data.duration}s</span>
-                    `;
-
-                    // Action buttons
-                    const logFile = data.log_file || window.initialLogFile;
-                    document.getElementById('action-buttons').innerHTML = `
-                        <a href="${window.dashboardUrl}"
-                           class="border border-slate-700 hover:border-slate-500 text-slate-300 px-4 py-2 rounded
-                                  text-[10px] font-bold uppercase tracking-widest hover:text-white transition">
-                            ← Dashboard
-                        </a>
-                        <a href="/log/view?file=${encodeURIComponent(logFile)}"
-                           class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded
-                                  text-[10px] font-bold uppercase tracking-widest transition">
-                            View Log →
-                        </a>
-                    `;
-
-                    // Status text
-                    document.getElementById('status-text').textContent = '';
-                    document.getElementById('status-text').classList.remove('animate-pulse');
-
-                    clearInterval(pollInterval);
-                }
-
-            } catch (err) {
-                console.error('Poll error:', err);
+            // Accumulate output per current task for the task list
+            if (currentTask) {
+                taskOutputs[currentTask] = (taskOutputs[currentTask] || '') + text;
+                renderTasks();
             }
+        }
+
+        // ── Handle SSE: done event ───────────────────────────────────────────
+
+        function onDone(data) {
+            const success  = data.success;
+            const duration = data.duration || 0;
+            logFile        = data.log_file || logFile;
+
+            // Progress bar — full + colour
+            const bar = document.getElementById('progress-bar');
+            bar.classList.remove('bar-running');
+            bar.style.width = '100%';
+            bar.classList.remove('bg-blue-500');
+            bar.classList.add(success ? 'bg-emerald-500' : 'bg-rose-500');
+
+            // Pulse dot
+            const dot = document.getElementById('pulse-dot');
+            dot.classList.remove('bg-blue-500', 'animate-pulse');
+            dot.classList.add(success ? 'bg-emerald-500' : 'bg-rose-500');
+
+            // Mark last running task
+            if (currentTask && taskStatus[currentTask] === 'running') {
+                taskStatus[currentTask] = success ? 'success' : 'failed';
+                renderTasks();
+            }
+
+            // Result banner
+            const banner = document.getElementById('result-banner');
+            banner.classList.remove('hidden');
+            const cls = success
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                : 'bg-rose-500/10 border-rose-500/30 text-rose-400';
+            banner.className = `p-4 rounded-lg border flex justify-between items-center text-[10px] font-bold uppercase tracking-widest ${cls}`;
+            banner.innerHTML = `
+                <span>${success ? '✓ Deployment Completed' : '✕ Deployment Failed'}</span>
+                <span class="text-slate-500">Duration: ${duration}s</span>
+            `;
+
+            // Action buttons
+            const baseName = logFile.replace(/\.log$/, '').replace(/\.rlog$/, '');
+            document.getElementById('action-buttons').innerHTML = `
+                <a href="${dashboardUrl}"
+                   class="border border-slate-700 hover:border-slate-500 text-slate-300 px-4 py-2 rounded
+                          text-[10px] font-bold uppercase tracking-widest hover:text-white transition">
+                    ← Dashboard
+                </a>
+                <a href="/log/rview/${encodeURIComponent(baseName)}"
+                   class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded
+                          text-[10px] font-bold uppercase tracking-widest transition">
+                    View Log →
+                </a>
+            `;
+
+            document.getElementById('status-text').textContent = '';
+            document.getElementById('status-text').classList.remove('animate-pulse');
+        }
+
+        // ── SSE connection ───────────────────────────────────────────────────
+
+        let es         = null;
+        let reconnects = 0;
+
+        function connectSSE() {
+            if (es) { es.close(); }
+
+            es = new EventSource('/status/stream');
+
+            es.addEventListener('status', (e) => {
+                reconnects = 0;
+                onStatus(JSON.parse(e.data));
+            });
+
+            es.addEventListener('log', (e) => {
+                onLog(JSON.parse(e.data));
+            });
+
+            es.addEventListener('done', (e) => {
+                onDone(JSON.parse(e.data));
+                es.close();
+            });
+
+            es.addEventListener('wait', () => {
+                document.getElementById('status-text').textContent = 'Waiting for deployment…';
+            });
+
+            es.onerror = () => {
+                reconnects++;
+                document.getElementById('status-text').textContent =
+                    `Reconnecting… (attempt ${reconnects})`;
+                // EventSource reconnects automatically — no manual retry needed
+            };
+
+            es.onopen = () => {
+                document.getElementById('status-text').textContent = 'Connected — streaming…';
+            };
         }
 
         // ── Stop deployment ──────────────────────────────────────────────────
@@ -323,18 +399,14 @@
             try {
                 const res  = await fetch('/deploy/stop', { method: 'POST' });
                 const data = await res.json();
-                if (data.success) {
-                    updateStatus();
-                } else {
-                    alert('Could not stop: ' + data.message);
-                }
+                if (!data.success) alert('Could not stop: ' + data.message);
             } catch (err) {
                 alert('Error: ' + err.message);
             }
         }
 
-        const pollInterval = setInterval(updateStatus, 1000);
-        window.addEventListener('load', updateStatus);
+        // ── Start ────────────────────────────────────────────────────────────
+        connectSSE();
     </script>
 
 </body>

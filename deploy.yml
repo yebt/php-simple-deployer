@@ -1,0 +1,13 @@
+- name: "list all files"
+  run: "ls"
+
+- name: "Dir"
+  run:
+    - "pwd"
+    - "ls | wc -l"
+
+- name: "Slleep"
+  run:
+    - "echo '----'"
+    - "sleep 5"
+    - "echo 'done'"

@@ -11,13 +11,14 @@ use Sphpd\Domain\Deployment\ArtifactDeployment;
 use Sphpd\Domain\Logger\Logger;
 
 /**
- * Webhook deploy endpoints.
+ * Webhook deploy endpoints + SSE live stream.
  *
  * /webhook/deploy
  * /webhook/deploy/nowait
  * /webhook/artifact-deploy
  * /webhook/artifact-deploy/nowait
- * /debugdeploy  (non-production only)
+ * /status/stream   — SSE real-time log stream
+ * /debugdeploy     (non-production only)
  */
 class DeployAction
 {
@@ -26,7 +27,6 @@ class DeployAction
     private Deployment $deployment;
     private ArtifactDeployment $artifactDeployment;
     private Logger $logger;
-    /** @var string */
     private string $entryScript;
 
     public function __construct(
@@ -45,31 +45,15 @@ class DeployAction
         $this->entryScript        = $entryScript;
     }
 
-    private function dashboardUrl(string $query = ''): string
-    {
-        $route = (string) $this->config->get('dashboard_route');
-        return '/' . $route . ($query ? '?' . $query : '');
-    }
-
-    private function host(): string
-    {
-        return $_SERVER['HTTP_HOST'] ?? 'localhost';
-    }
-
-    private function method(): string
-    {
-        return strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
-    }
-
-    // -------------------------------------------------------------------------
+    // ── Deploy endpoints ──────────────────────────────────────────────────────
 
     /** POST /webhook/deploy  (GET with ?manual=1 also accepted) */
     public function webhookDeploy(): void
     {
         $this->security->assertValid();
 
-        $manual = isset($_GET['manual']) && $_GET['manual'] === '1';
-        $method = $this->method();
+        $manual       = isset($_GET['manual']) && $_GET['manual'] === '1';
+        $method       = $this->method();
         $configMethod = strtoupper((string) $this->config->get('webhook_method'));
 
         if ($method !== $configMethod && !($manual && $method === 'GET')) {
@@ -80,8 +64,8 @@ class DeployAction
         if ($manual) {
             $host = $this->host();
             exec('php ' . escapeshellarg($this->entryScript) . ' run-deploy ' . escapeshellarg($host) . ' > /dev/null 2>&1 &');
-            usleep(500000);
-            header('Location: ' . $this->dashboardUrl());
+            usleep(300000);
+            header('Location: /status/live');
             exit();
         }
 
@@ -129,7 +113,7 @@ class DeployAction
         }
 
         $contract = $this->parseArtifactInput();
-        $host = $this->host();
+        $host     = $this->host();
 
         exec(
             'php ' . escapeshellarg($this->entryScript)
@@ -153,11 +137,152 @@ class DeployAction
         $this->deployment->run($this->host());
     }
 
-    // -------------------------------------------------------------------------
+    // ── SSE live stream ───────────────────────────────────────────────────────
+
+    /**
+     * GET /status/stream
+     *
+     * Server-Sent Events endpoint. Streams the .rlog file of the current
+     * (or most recent) deployment in real time. Supports reconnection via the
+     * Last-Event-ID header — the client sends the last byte offset it received,
+     * so the server can resume from there.
+     *
+     * Event types emitted:
+     *   status  — current task/index/total/running from .current_status
+     *   log     — one chunk of raw output from the .rlog file
+     *   done    — deployment finished (success + duration)
+     *   wait    — no active deployment, client should keep polling
+     */
+    public function stream(): void
+    {
+        // Disable output buffering everywhere we can
+        if (ob_get_level()) {
+            ob_end_clean();
+        }
+
+        header('Content-Type: text/event-stream');
+        header('Cache-Control: no-cache');
+        header('X-Accel-Buffering: no'); // disable nginx/apache buffering
+
+        $statusFile = $this->logger->getStatusFile();
+        $logsPath   = $this->logger->getLogsPath();
+
+        // Resume from last known byte offset (reconnection support)
+        $lastEventId = $_SERVER['HTTP_LAST_EVENT_ID'] ?? '';
+        $offset      = is_numeric($lastEventId) ? (int) $lastEventId : 0;
+
+        $rlogPath  = '';
+        $maxIdle   = 120; // seconds before closing (client reconnects automatically)
+        $idleStart = time();
+
+        while (true) {
+            if (connection_aborted()) {
+                break;
+            }
+
+            // Read current status
+            $status = [];
+            if (file_exists($statusFile)) {
+                $status = json_decode((string) file_get_contents($statusFile), true) ?? [];
+            }
+
+            // Resolve rlog path from status
+            if (!empty($status['log_file']) && $rlogPath === '') {
+                $candidate = $logsPath . '/' . $status['log_file'];
+                if (file_exists($candidate)) {
+                    $rlogPath  = $candidate;
+                    $offset    = is_numeric($lastEventId) ? (int) $lastEventId : 0;
+                    $idleStart = time();
+                }
+            }
+
+            // No deployment active yet — emit wait and hold
+            if (empty($status) || (!isset($status['running']) && empty($rlogPath))) {
+                $this->sseEvent('wait', ['message' => 'No active deployment'], null);
+                $this->sseSleep(2000);
+
+                if (time() - $idleStart > $maxIdle) {
+                    break;
+                }
+                continue;
+            }
+
+            // Stream new rlog content since last offset
+            $hadOutput = false;
+            if ($rlogPath !== '' && file_exists($rlogPath)) {
+                clearstatcache(true, $rlogPath);
+                $fileSize = filesize($rlogPath);
+                if ($fileSize > $offset) {
+                    $fp   = fopen($rlogPath, 'rb');
+                    fseek($fp, $offset);
+                    $chunk  = fread($fp, $fileSize - $offset);
+                    fclose($fp);
+                    $offset = $fileSize;
+                    $idleStart = time();
+
+                    if ($chunk !== false && $chunk !== '') {
+                        $hadOutput = true;
+                        $this->sseEvent('log', ['text' => $chunk], (string) $offset);
+                    }
+                }
+            }
+
+            // Always emit current status so the UI can update task progress
+            if (!empty($status)) {
+                $this->sseEvent('status', [
+                    'running' => $status['running'] ?? false,
+                    'task'    => $status['task']    ?? '',
+                    'index'   => $status['index']   ?? 0,
+                    'total'   => $status['total']   ?? 0,
+                ], null);
+            }
+
+            // Deployment finished — emit done and close
+            if (isset($status['finished']) && $status['finished'] === true) {
+                $this->sseEvent('done', [
+                    'success'  => $status['success']  ?? false,
+                    'duration' => $status['duration']  ?? 0,
+                    'log_file' => $status['log_file']  ?? '',
+                ], null);
+                break;
+            }
+
+            // Idle timeout guard
+            if (time() - $idleStart > $maxIdle) {
+                break;
+            }
+
+            // Adaptive sleep: no delay if there was output, short pause otherwise
+            if (!$hadOutput) {
+                $this->sseSleep(200);
+            }
+        }
+    }
+
+    // ── SSE helpers ───────────────────────────────────────────────────────────
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private function sseEvent(string $event, array $data, ?string $id): void
+    {
+        if ($id !== null) {
+            echo "id: $id\n";
+        }
+        echo "event: $event\n";
+        echo 'data: ' . json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n\n";
+        flush();
+    }
+
+    private function sseSleep(int $milliseconds): void
+    {
+        usleep($milliseconds * 1000);
+    }
+
+    // ── Artifact helpers ──────────────────────────────────────────────────────
 
     /**
      * Validates security, method, reads + logs raw input, validates fields.
-     * Returns the artifact contract array.
      *
      * @return array{project_id:string,branch:string,job:string,job_id:string}
      */
@@ -170,8 +295,9 @@ class DeployAction
             exit('Method Not Allowed');
         }
 
-        $rawInput = (string) file_get_contents('php://input');
-        $this->logger->logRequest($rawInput);
+        $rawInput   = (string) file_get_contents('php://input');
+        $logFilePath = $this->logger->getLogsPath() . '/webhook_artifact_' . date('Ymd_His') . '.log';
+        $this->logger->logRequest($logFilePath, $rawInput, $_SERVER, $_GET, $_POST);
 
         return $this->parseArtifactInput($rawInput);
     }
@@ -195,7 +321,7 @@ class DeployAction
         if (!$projectId || !$jobId) {
             http_response_code(400);
             header('Content-Type: application/json');
-            echo json_encode(['error' => 'Missing required fields: project_id']);
+            echo json_encode(['error' => 'Missing required fields: project_id, job_id']);
             exit();
         }
 
@@ -205,5 +331,23 @@ class DeployAction
             'job'        => (string) $job,
             'job_id'     => (string) $jobId,
         ];
+    }
+
+    // ── Internal helpers ──────────────────────────────────────────────────────
+
+    private function dashboardUrl(string $query = ''): string
+    {
+        $route = (string) $this->config->get('dashboard_route');
+        return '/' . $route . ($query ? '?' . $query : '');
+    }
+
+    private function host(): string
+    {
+        return $_SERVER['HTTP_HOST'] ?? 'localhost';
+    }
+
+    private function method(): string
+    {
+        return strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
     }
 }

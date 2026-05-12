@@ -125,10 +125,11 @@ $selfUpd = new SelfUpdateAction($config, $security, $updater);
 $router = new Router();
 
 // Status / live
-$router->add('/status/check', [$status, 'check']);
-$router->add('/status/data',  [$status, 'data']);
-$router->add('/status/live',  [$health, 'liveStatus']);
-$router->add('/deploy/stop',  [$status, 'stop']);
+$router->add('/status/check',  [$status, 'check']);
+$router->add('/status/data',   [$status, 'data']);
+$router->add('/status/live',   [$health, 'liveStatus']);
+$router->add('/status/stream', [$deploy, 'stream']);
+$router->add('/deploy/stop',   [$status, 'stop']);
 
 // Dashboard / health views
 $router->add('/', [$health, 'home']);
