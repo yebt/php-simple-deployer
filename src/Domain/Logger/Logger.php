@@ -21,7 +21,7 @@ class Logger
 
     public function __construct(string $logsPath, string $statusFile)
     {
-        $this->logsPath   = rtrim($logsPath, '/');
+        $this->logsPath = rtrim($logsPath, '/');
         $this->statusFile = $statusFile;
 
         if (!is_dir($this->logsPath)) {
@@ -142,21 +142,21 @@ HTML;
     ): void {
         $decodedBody = json_decode($rawBody, true);
         $entry = [
-            'timestamp'    => date('c'),
-            'method'       => $serverVars['REQUEST_METHOD'] ?? 'CLI',
-            'uri'          => $serverVars['REQUEST_URI']    ?? null,
-            'remote_addr'  => $serverVars['REMOTE_ADDR']   ?? null,
+            'timestamp' => date('c'),
+            'method' => $serverVars['REQUEST_METHOD'] ?? 'CLI',
+            'uri' => $serverVars['REQUEST_URI'] ?? null,
+            'remote_addr' => $serverVars['REMOTE_ADDR'] ?? null,
             'query_params' => $queryParams,
-            'post_params'  => $postParams,
-            'json_body'    => json_last_error() === JSON_ERROR_NONE ? $decodedBody : null,
-            'raw_body'     => $rawBody,
-            'headers'      => $headers,
+            'post_params' => $postParams,
+            'json_body' => JSON_ERROR_NONE === json_last_error() ? $decodedBody : null,
+            'raw_body' => $rawBody,
+            'headers' => $headers,
         ];
 
         file_put_contents(
             $logFilePath,
             json_encode($entry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
-                . PHP_EOL . str_repeat('=', 80) . PHP_EOL,
+                .PHP_EOL.str_repeat('=', 80).PHP_EOL,
             FILE_APPEND
         );
     }

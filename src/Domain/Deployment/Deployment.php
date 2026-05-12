@@ -36,12 +36,12 @@ class Deployment
         TelegramNotifier $notifier,
         string $statusFile
     ) {
-        $this->config       = $config;
-        $this->runner       = $runner;
+        $this->config = $config;
+        $this->runner = $runner;
         $this->instructions = $instructions;
-        $this->logger       = $logger;
-        $this->notifier     = $notifier;
-        $this->statusFile   = $statusFile;
+        $this->logger = $logger;
+        $this->notifier = $notifier;
+        $this->statusFile = $statusFile;
     }
 
     /**
@@ -50,12 +50,12 @@ class Deployment
      */
     public function validate(): ?string
     {
-        $projectPath      = $this->config->get('project_path');
+        $projectPath = $this->config->get('project_path');
         $instructionsFile = $this->config->get('instructions');
 
         $resolvedPath = realpath((string) $projectPath);
-        if (empty($projectPath) || $resolvedPath === false || !is_dir($resolvedPath)) {
-            return "Invalid or missing configuration: project_path \"$projectPath\" does not exist";
+        if (empty($projectPath) || false === $resolvedPath || !is_dir($resolvedPath)) {
+            return "Invalid or missing configuration: project_path \"{$projectPath}\" does not exist";
         }
 
         if (empty($instructionsFile)) {
@@ -63,7 +63,7 @@ class Deployment
         }
 
         if (!file_exists((string) $instructionsFile)) {
-            return "Instruction file not found: $instructionsFile";
+            return "Instruction file not found: {$instructionsFile}";
         }
 
         $result = $this->instructions->load((string) $instructionsFile);
@@ -84,36 +84,43 @@ class Deployment
         // Concurrent deployment guard — block only if actively running
         if (file_exists($this->statusFile)) {
             $current = json_decode((string) file_get_contents($this->statusFile), true);
-            if (isset($current['running']) && $current['running'] === true) {
+            if (isset($current['running']) && true === $current['running']) {
                 return $this->failure('Deployment already in progress.', 0.0, '');
             }
             unlink($this->statusFile);
         }
 
-        $baseName    = 'deploy_' . date('Ymd_His');
-        $logsPath    = rtrim((string) $this->config->get('logs_path'), '/');
-        $logPath     = $logsPath . '/' . $baseName . '.log';
-        $rlogPath    = $logsPath . '/' . $baseName . '.rlog';
-        $htmlPath    = $logsPath . '/' . $baseName . '.html';
+        $baseName = 'deploy_' . date('Ymd_His');
+        $logsPath = rtrim((string) $this->config->get('logs_path'), '/');
+        $logPath = $logsPath . '/' . $baseName . '.log';
+        $rlogPath = $logsPath . '/' . $baseName . '.rlog';
+        $htmlPath = $logsPath . '/' . $baseName . '.html';
 
         $instructionsFile = (string) $this->config->get('instructions');
         $result = $this->instructions->load($instructionsFile);
 
         if (isset($result['error'])) {
             $this->notifyFailure($host, 0.0, $logPath, '', $result['error']);
+
             return $this->failure($result['error'], 0.0, $baseName . '.log');
         }
 
         $projectPath = (string) $this->config->get('project_path');
         $resolvedCwd = realpath($projectPath);
-        if ($resolvedCwd === false || !is_dir($resolvedCwd)) {
-            $msg = "project_path \"$projectPath\" does not exist or is not a directory";
+        if (!$resolvedCwd && defined('ROOT_PATH')) {
+            $rootBaseCall = constant('ROOT_PATH') .'/'. $projectPath;
+            $resolvedCwd = realpath($rootBaseCall);
+        }
+        if (false === $resolvedCwd || !is_dir($resolvedCwd)) {
+            $msg = "project_path \"{$projectPath}\" does not exist or is not a directory";
             $this->notifyFailure($host, 0.0, $logPath, '', $msg);
+
             return $this->failure($msg, 0.0, $baseName . '.log');
         }
 
-        $tasks     = $result['tasks'];
+        $tasks = $result['tasks'];
         $startTime = microtime(true);
+
 
         $taskResult = $this->runTasks(
             $tasks,
@@ -129,10 +136,10 @@ class Deployment
         $duration = round(microtime(true) - $startTime, 2);
 
         return [
-            'success'  => $taskResult['success'],
+            'success' => $taskResult['success'],
             'duration' => $duration,
-            'logFile'  => $baseName . '.log',
-            'error'    => $taskResult['error'],
+            'logFile' => $baseName . '.log',
+            'error' => $taskResult['error'],
         ];
     }
 
@@ -140,6 +147,7 @@ class Deployment
 
     /**
      * @param array<int, array<string, mixed>> $tasks
+     *
      * @return array{success: bool, error: string}
      */
     private function runTasks(
@@ -156,11 +164,11 @@ class Deployment
 
         // Initialise status — broadcast rlog filename so SSE knows which file to tail
         $this->logger->updateLiveStatus([
-            'running'  => true,
-            'pid'      => getmypid(),
-            'task'     => 'Starting…',
-            'index'    => 0,
-            'total'    => $totalTasks,
+            'running' => true,
+            'pid' => getmypid(),
+            'task' => 'Starting…',
+            'index' => 0,
+            'total' => $totalTasks,
             'log_file' => $baseName . '.rlog',
         ]);
 
@@ -169,38 +177,38 @@ class Deployment
         $this->logger->appendRlog($rlogPath, $header);
         $this->logger->appendLog($logPath, $header);
 
-        $htmlBody    = '<h1>Deployment — ' . date('Y-m-d H:i:s') . "</h1>\n";
-        $success     = true;
-        $failedTask  = '';
+        $htmlBody = '<h1>Deployment — ' . date('Y-m-d H:i:s') . "</h1>\n";
+        $success = true;
+        $failedTask = '';
         $errorOutput = '';
-        $lastIndex   = 0;
+        $lastIndex = 0;
 
         foreach ($tasks as $index => $task) {
-            $lastIndex  = $index;
-            $taskName   = $task['name'] ?? 'Task #' . ($index + 1);
-            $commands   = is_array($task['run']) ? $task['run'] : [$task['run']];
+            $lastIndex = $index;
+            $taskName = $task['name'] ?? 'Task #' . ($index + 1);
+            $commands = is_array($task['run']) ? $task['run'] : [$task['run']];
             $taskSuccess = true;
 
             // ── Task start ────────────────────────────────────────────────────
-            $taskHeader = "\n[" . date('Y-m-d H:i:s') . "] +-- TASK " . ($index + 1) . "/$totalTasks: $taskName\n";
+            $taskHeader = "\n[" . date('Y-m-d H:i:s') . '] +-- TASK ' . ($index + 1) . "/{$totalTasks}: {$taskName}\n";
             $this->logger->appendRlog($rlogPath, $taskHeader);
             $this->logger->appendLog($logPath, $taskHeader);
-            $htmlBody .= "<hr><h2>" . htmlspecialchars($taskName) . "</h2>\n";
+            $htmlBody .= '<hr><h2>' . htmlspecialchars($taskName) . "</h2>\n";
 
             $this->logger->updateLiveStatus([
-                'running'  => true,
-                'task'     => $taskName,
-                'index'    => $index + 1,
-                'total'    => $totalTasks,
+                'running' => true,
+                'task' => $taskName,
+                'index' => $index + 1,
+                'total' => $totalTasks,
                 'log_file' => $baseName . '.rlog',
             ]);
 
             // ── Commands ──────────────────────────────────────────────────────
             foreach ($commands as $cmd) {
-                $cmdHeader = '[' . date('Y-m-d H:i:s') . "] $ $cmd\n";
+                $cmdHeader = '[' . date('Y-m-d H:i:s') . "] $ {$cmd}\n";
                 $this->logger->appendRlog($rlogPath, $cmdHeader);
-                $this->logger->appendLog($logPath, "[CMD] $cmd\n");
-                $htmlBody .= "<h3>$ " . htmlspecialchars((string) $cmd) . "</h3>\n<pre><code>";
+                $this->logger->appendLog($logPath, "[CMD] {$cmd}\n");
+                $htmlBody .= '<h3>$ ' . htmlspecialchars((string) $cmd) . "</h3>\n<pre><code>";
 
                 $cmdStdout = '';
                 $cmdStderr = '';
@@ -210,7 +218,7 @@ class Deployment
                     (string) $cmd,
                     $cwd,
                     function (string $type, string $chunk) use ($rlogPath, &$cmdStdout, &$cmdStderr): void {
-                        if ($type === 'out') {
+                        if ('out' === $type) {
                             $cmdStdout .= $chunk;
                         } else {
                             $cmdStderr .= $chunk;
@@ -227,59 +235,61 @@ class Deployment
 
                 $htmlBody .= htmlspecialchars($result['stdout']);
                 if ($result['stderr']) {
-                    $htmlBody .= "<span class='err'>" . htmlspecialchars($result['stderr']) . "</span>";
+                    $htmlBody .= "<span class='err'>" . htmlspecialchars($result['stderr']) . '</span>';
                 }
                 $htmlBody .= "</code></pre>\n";
 
-                $hasError = $result['exitCode'] !== 0
+                $hasError = 0 !== $result['exitCode']
                     || (bool) preg_match('/(npm error|error:|failed|Error:|ERR!)/i', $result['stderr']);
 
                 if ($hasError) {
                     $taskSuccess = false;
                     $errorOutput = $result['stderr'] ?: $result['stdout'];
+
                     break;
                 }
             }
 
             // ── Task result ───────────────────────────────────────────────────
             if ($taskSuccess) {
-                $line = '[' . date('Y-m-d H:i:s') . "] ✓ TASK DONE: $taskName\n";
+                $line = '[' . date('Y-m-d H:i:s') . "] ✓ TASK DONE: {$taskName}\n";
                 $this->logger->appendRlog($rlogPath, $line);
                 $this->logger->appendLog($logPath, $line);
             } else {
-                $success    = false;
+                $success = false;
                 $failedTask = $taskName;
-                $line = '[' . date('Y-m-d H:i:s') . "] ✗ TASK FAILED: $taskName\n";
+                $line = '[' . date('Y-m-d H:i:s') . "] ✗ TASK FAILED: {$taskName}\n";
                 $this->logger->appendRlog($rlogPath, $line);
                 $this->logger->appendLog($logPath, $line);
+
                 break;
             }
         }
 
         // ── Finalize ──────────────────────────────────────────────────────────
         $duration = round(microtime(true) - $startTime, 2);
-        $status   = $success ? 'SUCCESS' : "FAILED at: $failedTask";
-        $footer   = '[' . date('Y-m-d H:i:s') . "] === DEPLOYMENT $status ({$duration}s) ===\n";
+        $status = $success ? 'SUCCESS' : "FAILED at: {$failedTask}";
+        $footer = '[' . date('Y-m-d H:i:s') . "] === DEPLOYMENT {$status} ({$duration}s) ===\n";
 
         $this->logger->appendRlog($rlogPath, $footer);
         $this->logger->appendLog($logPath, $footer);
 
-        $htmlBody .= "<hr><h2 class='" . ($success ? 'ok' : 'err') . "'>$status — {$duration}s</h2>\n";
-        $this->logger->writeHtml($htmlPath, "Deploy — $status", $htmlBody);
+        $htmlBody .= "<hr><h2 class='" . ($success ? 'ok' : 'err') . "'>{$status} — {$duration}s</h2>\n";
+        $this->logger->writeHtml($htmlPath, "Deploy — {$status}", $htmlBody);
 
         $this->logger->updateLiveStatus([
-            'running'  => false,
+            'running' => false,
             'finished' => true,
-            'success'  => $success,
-            'task'     => $success ? 'Deployment finished successfully' : "Failed: $failedTask",
-            'index'    => $lastIndex + 1,
-            'total'    => $totalTasks,
+            'success' => $success,
+            'task' => $success ? 'Deployment finished successfully' : "Failed: {$failedTask}",
+            'index' => $lastIndex + 1,
+            'total' => $totalTasks,
             'duration' => $duration,
             'log_file' => $baseName . '.rlog',
         ]);
 
         // ── Telegram notification ─────────────────────────────────────────────
-        $logId  = $baseName;
+        $logId = $baseName;
         $logUrl = 'http://' . $host . '/log/rview/' . $logId;
         $this->notifier->send(
             $this->notifier->buildReport($host, $success, $duration, $logUrl, $failedTask, $errorOutput)
@@ -303,7 +313,7 @@ class Deployment
         string $failedTask,
         string $error
     ): void {
-        $logId  = pathinfo($logPath, PATHINFO_FILENAME);
+        $logId = pathinfo($logPath, PATHINFO_FILENAME);
         $logUrl = 'http://' . $host . '/log/rview/' . $logId;
         $this->notifier->send(
             $this->notifier->buildReport($host, false, $duration, $logUrl, $failedTask, $error)

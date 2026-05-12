@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Sphpd\Domain\Instructions;
 
-use Symfony\Component\Yaml\Yaml;
 use Symfony\Component\Yaml\Exception\ParseException;
+use Symfony\Component\Yaml\Yaml;
 
 /**
  * Loads and validates deployment instructions from JSON or YAML files.
@@ -17,17 +17,17 @@ class Instructions
     /**
      * Load tasks from a file path (JSON or YAML).
      *
-     * @return array{tasks: array<int, array<string, mixed>>}|array{error: string}
+     * @return array{error: string}|array{tasks: array<int, array<string, mixed>>}
      */
     public function load(string $filePath): array
     {
         if (!file_exists($filePath)) {
-            return ['error' => "Instructions file not found: $filePath"];
+            return ['error' => "Instructions file not found: {$filePath}"];
         }
 
         $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
 
-        if ($ext === 'yml' || $ext === 'yaml') {
+        if ('yml' === $ext || 'yaml' === $ext) {
             return $this->loadYaml($filePath);
         }
 
@@ -37,13 +37,13 @@ class Instructions
     /**
      * Load tasks from a JSON string directly (no file I/O).
      *
-     * @return array{tasks: array<int, array<string, mixed>>}|array{error: string}
+     * @return array{error: string}|array{tasks: array<int, array<string, mixed>>}
      */
     public function loadFromJson(string $json): array
     {
         $tasks = json_decode($json, true);
 
-        if ($tasks === null) {
+        if (null === $tasks) {
             return ['error' => 'Invalid JSON: '.json_last_error_msg()];
         }
 
@@ -53,7 +53,7 @@ class Instructions
     /**
      * Load tasks from a YAML string directly (no file I/O).
      *
-     * @return array{tasks: array<int, array<string, mixed>>}|array{error: string}
+     * @return array{error: string}|array{tasks: array<int, array<string, mixed>>}
      */
     public function loadFromYaml(string $yaml): array
     {
@@ -71,7 +71,8 @@ class Instructions
      * Returns true on success, or a string error message.
      *
      * @param mixed $tasks
-     * @return true|string
+     *
+     * @return string|true
      */
     public function validate($tasks)
     {
@@ -86,13 +87,15 @@ class Instructions
 
             $run = $task['run'] ?? null;
 
-            if ($run === null || ($run === '' && $run !== '0' && $run !== 0)) {
+            if (null === $run || ('' === $run && '0' !== $run && 0 !== $run)) {
                 $name = $task['name'] ?? 'Task #'.($index + 1);
+
                 return "Task '{$name}' is missing a 'run' command.";
             }
 
             if (!is_string($run) && !is_array($run)) {
                 $name = $task['name'] ?? 'Task #'.($index + 1);
+
                 return "Task '{$name}' 'run' must be a string or an array.";
             }
         }
@@ -102,25 +105,25 @@ class Instructions
 
     // -------------------------------------------------------------------------
 
-    /** @return array{tasks: array<int, array<string, mixed>>}|array{error: string} */
+    /** @return array{error: string}|array{tasks: array<int, array<string, mixed>>} */
     private function loadJson(string $filePath): array
     {
         $content = file_get_contents($filePath);
 
-        if ($content === false) {
-            return ['error' => "Cannot read file: $filePath"];
+        if (false === $content) {
+            return ['error' => "Cannot read file: {$filePath}"];
         }
 
         return $this->loadFromJson($content);
     }
 
-    /** @return array{tasks: array<int, array<string, mixed>>}|array{error: string} */
+    /** @return array{error: string}|array{tasks: array<int, array<string, mixed>>} */
     private function loadYaml(string $filePath): array
     {
         $content = file_get_contents($filePath);
 
-        if ($content === false) {
-            return ['error' => "Cannot read file: $filePath"];
+        if (false === $content) {
+            return ['error' => "Cannot read file: {$filePath}"];
         }
 
         return $this->loadFromYaml($content);
@@ -128,13 +131,14 @@ class Instructions
 
     /**
      * @param mixed $tasks
-     * @return array{tasks: array<int, array<string, mixed>>}|array{error: string}
+     *
+     * @return array{error: string}|array{tasks: array<int, array<string, mixed>>}
      */
     private function validated($tasks): array
     {
         $result = $this->validate($tasks);
 
-        if ($result !== true) {
+        if (true !== $result) {
             return ['error' => $result];
         }
 

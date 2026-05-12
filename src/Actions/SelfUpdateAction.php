@@ -19,17 +19,18 @@ class SelfUpdateAction
 
     public function __construct(Config $config, Security $security, SelfUpdater $updater)
     {
-        $this->config   = $config;
+        $this->config = $config;
         $this->security = $security;
-        $this->updater  = $updater;
+        $this->updater = $updater;
     }
 
     public function __invoke(): void
     {
         $this->security->assertValid();
 
-        if (strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
+        if ('GET' !== strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET')) {
             http_response_code(405);
+
             exit('Method Not Allowed');
         }
 
@@ -37,9 +38,9 @@ class SelfUpdateAction
 
         try {
             $result = $this->updater->update();
-            $query  = http_build_query([
+            $query = http_build_query([
                 'updated' => '1',
-                'backup'  => 'backups/' . basename($result['backup_path']),
+                'backup' => 'backups/'.basename($result['backup_path']),
             ]);
         } catch (\Throwable $e) {
             $query = http_build_query([
@@ -48,8 +49,9 @@ class SelfUpdateAction
             ]);
         }
 
-        header('Location: /' . $returnTo . ($query ? '?' . $query : ''));
-        exit();
+        header('Location: /'.$returnTo.($query ? '?'.$query : ''));
+
+        exit;
     }
 
     private function normalizeDashboardReturn(string $route): string

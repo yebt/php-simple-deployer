@@ -22,10 +22,10 @@ class Security
     /**
      * Returns true when the request is allowed, false otherwise.
      *
-     * @param array<string, string> $headers   HTTP headers (case-insensitive)
-     * @param array<string, string> $query     $_GET equivalent
-     * @param string|null           $clientIp  REMOTE_ADDR equivalent
-     * @param bool                  $isManual  true when ?manual=1 is set
+     * @param array<string, string> $headers  HTTP headers (case-insensitive)
+     * @param array<string, string> $query    $_GET equivalent
+     * @param null|string           $clientIp REMOTE_ADDR equivalent
+     * @param bool                  $isManual true when ?manual=1 is set
      */
     public function isAuthorised(
         array $headers,
@@ -34,7 +34,7 @@ class Security
         bool $isManual = false
     ): bool {
         // No token configured → open access
-        if ($this->secureToken === '') {
+        if ('' === $this->secureToken) {
             return true;
         }
 
@@ -62,13 +62,14 @@ class Security
      */
     public function assertValid(): void
     {
-        $headers  = static::headersFromServer($_SERVER);
-        $query    = $_GET;
+        $headers = static::headersFromServer($_SERVER);
+        $query = $_GET;
         $clientIp = $_SERVER['REMOTE_ADDR'] ?? null;
-        $isManual = isset($_GET['manual']) && $_GET['manual'] === '1';
+        $isManual = isset($_GET['manual']) && '1' === $_GET['manual'];
 
         if (!$this->isAuthorised($headers, $query, $clientIp, $isManual)) {
             http_response_code(403);
+
             exit('Forbidden');
         }
     }
@@ -78,7 +79,8 @@ class Security
      *
      * Drop-in replacement for getallheaders() when that function is absent.
      *
-     * @param array<string, string> $server  $_SERVER equivalent
+     * @param array<string, string> $server $_SERVER equivalent
+     *
      * @return array<string, string>
      */
     public static function headersFromServer(array $server): array
@@ -91,9 +93,10 @@ class Security
 
         $headers = [];
         foreach ($server as $key => $value) {
-            if (strpos($key, 'HTTP_') === 0) {
+            if (0 === strpos($key, 'HTTP_')) {
                 $name = str_replace(
-                    ' ', '-',
+                    ' ',
+                    '-',
                     ucwords(strtolower(str_replace('_', ' ', substr($key, 5))))
                 );
                 $headers[$name] = $value;
@@ -103,7 +106,8 @@ class Security
         foreach (['CONTENT_TYPE', 'CONTENT_LENGTH', 'CONTENT_MD5', 'AUTHORIZATION'] as $key) {
             if (isset($server[$key])) {
                 $name = str_replace(
-                    ' ', '-',
+                    ' ',
+                    '-',
                     ucwords(strtolower(str_replace('_', ' ', $key)))
                 );
                 $headers[$name] = $server[$key];

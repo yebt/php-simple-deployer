@@ -14,24 +14,22 @@ class Router
     /** @var array<string, callable> */
     private array $routes = [];
 
-    /** @var callable|null */
-    private $notFound = null;
+    /** @var null|callable */
+    private $notFound;
 
     /**
      * Register a route.
      *
-     * @param string   $pattern  Path pattern (no delimiters, no anchors).
-     * @param callable $callback Handler; capture groups are passed as arguments.
+     * @param string   $pattern  path pattern (no delimiters, no anchors)
+     * @param callable $callback handler; capture groups are passed as arguments
      */
     public function add(string $pattern, callable $callback): void
     {
-        $this->routes['#^' . $pattern . '$#'] = $callback;
+        $this->routes['#^'.$pattern.'$#'] = $callback;
     }
 
     /**
      * Register a custom 404 handler.
-     *
-     * @param callable $callback
      */
     public function setNotFound(callable $callback): void
     {
@@ -41,8 +39,9 @@ class Router
     /**
      * Resolve a URI path against registered routes.
      *
-     * @param string $uri  Full request URI or just the path.
-     * @return mixed       Whatever the matched handler returns.
+     * @param string $uri full request URI or just the path
+     *
+     * @return mixed whatever the matched handler returns
      */
     public function resolve(string $uri)
     {
@@ -51,6 +50,7 @@ class Router
         foreach ($this->routes as $pattern => $callback) {
             if (preg_match($pattern, $path, $matches)) {
                 array_shift($matches);
+
                 return call_user_func_array($callback, $matches);
             }
         }

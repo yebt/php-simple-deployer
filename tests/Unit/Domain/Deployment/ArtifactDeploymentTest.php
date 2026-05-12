@@ -16,47 +16,59 @@ function makeArtifactDeployment(
     ?callable $runnerStub = null,
     ?callable $downloaderStub = null
 ): array {
-    $tmpDir      = sys_get_temp_dir().'/sphpd_art_'.uniqid();
+    $tmpDir = sys_get_temp_dir().'/sphpd_art_'.uniqid();
     mkdir($tmpDir);
-    $logsDir     = $tmpDir.'/logs';
+    $logsDir = $tmpDir.'/logs';
     mkdir($logsDir);
-    $deployDir   = $tmpDir.'/artifact-deploy';
+    $deployDir = $tmpDir.'/artifact-deploy';
     mkdir($deployDir);
-    $statusFile  = $tmpDir.'/status.json';
-    $instrFile   = $tmpDir.'/artifact-deploy.json';
+    $statusFile = $tmpDir.'/status.json';
+    $instrFile = $tmpDir.'/artifact-deploy.json';
 
     $env = array_merge([
-        'LOGS_PATH'                  => $logsDir,
-        'GITLAB_TOKEN'               => 'test-token',
-        'GITLAB_BASE_URL'            => 'https://gitlab.example.com',
-        'ARTIFACT_DEPLOY_DIR'        => $deployDir,
+        'LOGS_PATH' => $logsDir,
+        'GITLAB_TOKEN' => 'test-token',
+        'GITLAB_BASE_URL' => 'https://gitlab.example.com',
+        'ARTIFACT_DEPLOY_DIR' => $deployDir,
         'ARTIFACT_INSTRUCTIONS_FILE' => $instrFile,
     ], $envOverrides);
 
-    $config     = new Config($env);
-    $notifier   = new TelegramNotifier('', '', null, $logsDir); // no-op
-    $logger     = new Logger($logsDir, $statusFile);
+    $config = new Config($env);
+    $notifier = new TelegramNotifier('', '', null, $logsDir); // no-op
+    $logger = new Logger($logsDir, $statusFile);
     $instructions = new Instructions();
 
     $runner = $runnerStub
         ? new class($runnerStub) extends ProcessRunner {
             private $fn;
-            public function __construct(callable $fn) { $this->fn = $fn; }
-            public function run(string $command, ?string $cwd = null, ?callable $onOutput = null): array {
+
+            public function __construct(callable $fn)
+            {
+                $this->fn = $fn;
+            }
+
+            public function run(string $command, ?string $cwd = null, ?callable $onOutput = null): array
+            {
                 return ($this->fn)($command, $cwd);
             }
-          }
-        : new ProcessRunner();
+        }
+    : new ProcessRunner();
 
     $deployment = new ArtifactDeployment(
-        $config, $runner, $instructions, $logger, $notifier, $statusFile, $downloaderStub
+        $config,
+        $runner,
+        $instructions,
+        $logger,
+        $notifier,
+        $statusFile,
+        $downloaderStub
     );
 
     return [
         'deployment' => $deployment,
-        'tmpDir'     => $tmpDir,
-        'instrFile'  => $instrFile,
-        'deployDir'  => $deployDir,
+        'tmpDir' => $tmpDir,
+        'instrFile' => $instrFile,
+        'deployDir' => $deployDir,
         'statusFile' => $statusFile,
     ];
 }
@@ -182,7 +194,7 @@ test('ArtifactDeployment: extract returns false for invalid zip', function () {
 test('ArtifactDeployment: run succeeds with valid zip and instructions', function () {
     // Build a valid zip with a placeholder file
     $zipTmp = tempnam(sys_get_temp_dir(), 'sphpd_zip_');
-    $zip    = new ZipArchive();
+    $zip = new ZipArchive();
     $zip->open($zipTmp, ZipArchive::CREATE | ZipArchive::OVERWRITE);
     $zip->addFromString('app.txt', 'content');
     $zip->close();
@@ -192,6 +204,7 @@ test('ArtifactDeployment: run succeeds with valid zip and instructions', functio
 
     $dl = function (string $url, string $destFile) use ($zipContent): array {
         file_put_contents($destFile, $zipContent);
+
         return ['code' => 200, 'error' => ''];
     };
 
@@ -199,8 +212,8 @@ test('ArtifactDeployment: run succeeds with valid zip and instructions', functio
         return ['stdout' => 'done', 'stderr' => '', 'exitCode' => 0, 'timedOut' => false];
     };
 
-    ['deployment' => $dep, 'tmpDir' => $dir, 'instrFile' => $instr] =
-        makeArtifactDeployment([], $runnerStub, $dl);
+    ['deployment' => $dep, 'tmpDir' => $dir, 'instrFile' => $instr]
+        = makeArtifactDeployment([], $runnerStub, $dl);
 
     file_put_contents($instr, json_encode([['name' => 'Install', 'run' => 'echo install']]));
 

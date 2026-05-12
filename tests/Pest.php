@@ -1,5 +1,6 @@
 <?php
 
 declare(strict_types=1);
+use PHPUnit\Framework\TestCase;
 
-uses(PHPUnit\Framework\TestCase::class)->in('Feature', 'Unit');
+uses(TestCase::class)->in('Feature', 'Unit');

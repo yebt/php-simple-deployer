@@ -42,28 +42,29 @@ class Config
     private function build(array $env, ?string $baseDir = null): array
     {
         $resolve = static function (string $path) use ($baseDir): string {
-            if ($baseDir === null || $path[0] === '/') {
+            if (null === $baseDir || '/' === $path[0]) {
                 return $path;
             }
-            return $baseDir . '/' . ltrim($path, './');
+
+            return $baseDir.'/'.ltrim($path, './');
         };
 
         return [
-            'project_path'           => $this->env($env, 'PROJECT_PATH'),
-            'instructions'           => $resolve((string) $this->env($env, 'INSTRUCTIONS_FILE', 'deploy.json')),
-            'logs_path'              => $resolve((string) $this->env($env, 'LOGS_PATH', 'logs')),
-            'telegram_enabled'       => $this->env($env, 'TELEGRAM_NOTIFICATIONS', true),
-            'bot_token'              => $this->env($env, 'TELEGRAM_BOT_TOKEN', ''),
-            'chat_id'                => $this->env($env, 'TELEGRAM_CHAT_ID', ''),
-            'thread_id'              => $this->env($env, 'TELEGRAM_THREAD_ID'),
-            'secure_token'           => $this->env($env, 'SECURITY_TOKEN', ''),
-            'webhook_method'         => $this->env($env, 'WEBHOOK_METHOD', 'POST'),
-            'gitlab_token'           => $this->env($env, 'GITLAB_TOKEN', ''),
-            'gitlab_base_url'        => $this->env($env, 'GITLAB_BASE_URL', 'https://gitlab.com'),
-            'artifact_deploy_dir'    => $resolve((string) $this->env($env, 'ARTIFACT_DEPLOY_DIR', 'artifact-deploy')),
-            'artifact_instructions'  => $resolve((string) $this->env($env, 'ARTIFACT_INSTRUCTIONS_FILE', 'artifact-deploy.json')),
-            'dashboard_route'        => $this->env($env, 'DASHBOARD_ROUTE', 'health'),
-            'self_update_url'        => $this->env($env, 'SELF_UPDATE_URL', 'https://github.com/yebt/php-simple-deployer/releases/latest/download/index.php'),
+            'project_path' => $this->env($env, 'PROJECT_PATH'),
+            'instructions' => $resolve((string) $this->env($env, 'INSTRUCTIONS_FILE', 'deploy.json')),
+            'logs_path' => $resolve((string) $this->env($env, 'LOGS_PATH', 'logs')),
+            'telegram_enabled' => $this->env($env, 'TELEGRAM_NOTIFICATIONS', true),
+            'bot_token' => $this->env($env, 'TELEGRAM_BOT_TOKEN', ''),
+            'chat_id' => $this->env($env, 'TELEGRAM_CHAT_ID', ''),
+            'thread_id' => $this->env($env, 'TELEGRAM_THREAD_ID'),
+            'secure_token' => $this->env($env, 'SECURITY_TOKEN', ''),
+            'webhook_method' => $this->env($env, 'WEBHOOK_METHOD', 'POST'),
+            'gitlab_token' => $this->env($env, 'GITLAB_TOKEN', ''),
+            'gitlab_base_url' => $this->env($env, 'GITLAB_BASE_URL', 'https://gitlab.com'),
+            'artifact_deploy_dir' => $resolve((string) $this->env($env, 'ARTIFACT_DEPLOY_DIR', 'artifact-deploy')),
+            'artifact_instructions' => $resolve((string) $this->env($env, 'ARTIFACT_INSTRUCTIONS_FILE', 'artifact-deploy.json')),
+            'dashboard_route' => $this->env($env, 'DASHBOARD_ROUTE', 'health'),
+            'self_update_url' => $this->env($env, 'SELF_UPDATE_URL', 'https://github.com/yebt/php-simple-deployer/releases/latest/download/index.php'),
         ];
     }
 
@@ -71,7 +72,8 @@ class Config
      * Read a key from an env array, coercing string booleans/null.
      *
      * @param array<string, mixed> $env
-     * @param mixed $default
+     * @param mixed                $default
+     *
      * @return mixed
      */
     private function env(array $env, string $key, $default = null)
@@ -80,9 +82,15 @@ class Config
 
         if (is_string($value)) {
             $lower = strtolower($value);
-            if ($lower === 'true')  return true;
-            if ($lower === 'false') return false;
-            if ($lower === 'null')  return null;
+            if ('true' === $lower) {
+                return true;
+            }
+            if ('false' === $lower) {
+                return false;
+            }
+            if ('null' === $lower) {
+                return null;
+            }
         }
 
         return $value;

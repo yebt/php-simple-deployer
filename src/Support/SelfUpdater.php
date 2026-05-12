@@ -17,14 +17,14 @@ class SelfUpdater
     private string $updateUrl;
     private string $backupDir;
     private string $scriptPath;
-    private int    $cacheTtl;
+    private int $cacheTtl;
 
-    /** @var callable(string $url): string */
+    /** @var callable(string): string */
     private $downloader;
 
     /**
-     * @param callable|null $downloader  Override for testing.
-     *                                   Signature: (string $url): string — returns remote content.
+     * @param null|callable $downloader Override for testing.
+     *                                  Signature: (string $url): string — returns remote content.
      */
     public function __construct(
         string $updateUrl,
@@ -33,15 +33,16 @@ class SelfUpdater
         int $cacheTtl = 300,
         ?callable $downloader = null
     ) {
-        $this->updateUrl  = $updateUrl;
-        $this->backupDir  = rtrim($backupDir, '/');
+        $this->updateUrl = $updateUrl;
+        $this->backupDir = rtrim($backupDir, '/');
         $this->scriptPath = $scriptPath;
-        $this->cacheTtl   = $cacheTtl;
+        $this->cacheTtl = $cacheTtl;
         $this->downloader = $downloader ?? static function (string $url): string {
             $content = file_get_contents($url);
-            if ($content === false) {
-                throw new \RuntimeException("Failed to download: $url");
+            if (false === $content) {
+                throw new \RuntimeException("Failed to download: {$url}");
             }
+
             return $content;
         };
     }
@@ -62,8 +63,8 @@ class SelfUpdater
 
         try {
             $remoteContent = ($this->downloader)($this->updateUrl);
-            $currentHash   = hash_file('sha256', $this->scriptPath);
-            $remoteHash    = hash('sha256', $remoteContent);
+            $currentHash = hash_file('sha256', $this->scriptPath);
+            $remoteHash = hash('sha256', $remoteContent);
 
             $status = [
                 'checked_at' => time(),
@@ -86,45 +87,50 @@ class SelfUpdater
      * Download the remote script and replace the current file atomically.
      *
      * @return array{backup_path: string, bytes: int}
+     *
      * @throws \RuntimeException on any failure
      */
     public function update(): array
     {
         $remoteContent = ($this->downloader)($this->updateUrl);
         $expectedBytes = strlen($remoteContent);
-        $timestamp     = date('Ymd_His');
-        $backupPath    = $this->backupDir.'/index.php.bak.'.$timestamp;
-        $permissions   = fileperms($this->scriptPath);
-        $tmpFile       = tempnam(dirname($this->scriptPath), 'index.php.update.');
+        $timestamp = date('Ymd_His');
+        $backupPath = $this->backupDir.'/index.php.bak.'.$timestamp;
+        $permissions = fileperms($this->scriptPath);
+        $tmpFile = tempnam(dirname($this->scriptPath), 'index.php.update.');
 
-        if ($tmpFile === false) {
+        if (false === $tmpFile) {
             throw new \RuntimeException('Unable to create a temporary file for the update.');
         }
 
         if (!is_dir($this->backupDir) && !mkdir($this->backupDir, 0777, true)) {
             unlink($tmpFile);
+
             throw new \RuntimeException('Unable to create backup directory at '.$this->backupDir.'.');
         }
 
         $writtenBytes = file_put_contents($tmpFile, $remoteContent, LOCK_EX);
 
-        if ($writtenBytes === false || $writtenBytes !== $expectedBytes) {
+        if (false === $writtenBytes || $writtenBytes !== $expectedBytes) {
             unlink($tmpFile);
+
             throw new \RuntimeException('Unable to write downloaded script to the temporary file.');
         }
 
-        if ($permissions !== false) {
+        if (false !== $permissions) {
             chmod($tmpFile, $permissions & 0777);
         }
 
         if (!rename($this->scriptPath, $backupPath)) {
             unlink($tmpFile);
+
             throw new \RuntimeException('Unable to move current script to '.$backupPath.'.');
         }
 
         if (!rename($tmpFile, $this->scriptPath)) {
             rename($backupPath, $this->scriptPath);
             unlink($tmpFile);
+
             throw new \RuntimeException('Unable to replace script with the downloaded version.');
         }
 
@@ -147,10 +153,10 @@ class SelfUpdater
         return sys_get_temp_dir().'/sphpd_self_update_status_'.md5($this->scriptPath).'.json';
     }
 
-    /** @param array<string, mixed>|null $cached */
+    /** @param null|array<string, mixed> $cached */
     private function isFresh(?array $cached): bool
     {
-        if ($cached === null || !array_key_exists('checked_at', $cached)) {
+        if (null === $cached || !array_key_exists('checked_at', $cached)) {
             return false;
         }
 
@@ -158,7 +164,7 @@ class SelfUpdater
     }
 
     /**
-     * @return array{checked_at: int, has_update: bool}|null
+     * @return null|array{checked_at: int, has_update: bool}
      */
     private function readCache(string $cacheFile): ?array
     {

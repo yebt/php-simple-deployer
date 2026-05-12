@@ -38,7 +38,7 @@ class ViewRenderer
     /**
      * Render a template by name (relative to templates/).
      *
-     * @param string               $template  e.g. 'health.latte' or 'partials/flash.latte'
+     * @param string               $template e.g. 'health.latte' or 'partials/flash.latte'
      * @param array<string, mixed> $params
      */
     public function render(string $template, array $params = []): void
@@ -49,7 +49,6 @@ class ViewRenderer
     /**
      * Render to string instead of outputting.
      *
-     * @param string               $template
      * @param array<string, mixed> $params
      */
     public function renderToString(string $template, array $params = []): string
