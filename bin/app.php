@@ -87,8 +87,13 @@ $updater = new SelfUpdater(
     $entryScript
 );
 
+$pharRoot = Phar::running();
+$templatesDir = $pharRoot !== ''
+    ? $pharRoot . '/templates'
+    : __DIR__ . '/../templates';
+
 $view = new ViewRenderer(
-    __DIR__ . '/../templates',
+    $templatesDir,
     sys_get_temp_dir() . '/sphpd_latte_cache'
 );
 
