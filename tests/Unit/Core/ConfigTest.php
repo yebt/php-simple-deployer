@@ -8,9 +8,23 @@ test('Config: returns default for missing key', function () {
     $config = new Config([]);
 
     expect($config->get('instructions'))->toBe('deploy.json');
-    expect($config->get('logs_path'))->toBe('./logs');
+    expect($config->get('logs_path'))->toBe('logs');
     expect($config->get('webhook_method'))->toBe('POST');
     expect($config->get('dashboard_route'))->toBe('health');
+});
+
+test('Config: paths are resolved against baseDir when provided', function () {
+    $config = new Config([], '/srv/app');
+
+    expect($config->get('instructions'))->toBe('/srv/app/deploy.json');
+    expect($config->get('logs_path'))->toBe('/srv/app/logs');
+    expect($config->get('artifact_deploy_dir'))->toBe('/srv/app/artifact-deploy');
+});
+
+test('Config: absolute paths are not modified even with baseDir', function () {
+    $config = new Config(['INSTRUCTIONS_FILE' => '/absolute/path/deploy.yml'], '/srv/app');
+
+    expect($config->get('instructions'))->toBe('/absolute/path/deploy.yml');
 });
 
 test('Config: env value overrides default', function () {
