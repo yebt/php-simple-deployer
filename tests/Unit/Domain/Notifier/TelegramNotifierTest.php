@@ -41,6 +41,26 @@ test('TelegramNotifier: returns false and logs on non-200 response', function ()
     rmdir($logDir);
 });
 
+test('TelegramNotifier: creates log directory if it does not exist on error', function () {
+    $logDir = sys_get_temp_dir().'/sphpd_tg_mkdir_'.uniqid();
+
+    expect(is_dir($logDir))->toBeFalse();
+
+    $transport = function (string $url, array $payload): array {
+        return ['code' => 500, 'body' => 'error', 'error' => 'timeout'];
+    };
+
+    $notifier = new TelegramNotifier('token123', 'chat1', null, $logDir, $transport);
+    $notifier->send('hello');
+
+    expect(is_dir($logDir))->toBeTrue();
+    expect(file_exists($logDir.'/telegram_errors.log'))->toBeTrue();
+
+    // cleanup
+    unlink($logDir.'/telegram_errors.log');
+    rmdir($logDir);
+});
+
 test('TelegramNotifier: thread_id is included in payload when set', function () {
     $captured = [];
     $transport = function (string $url, array $payload) use (&$captured): array {
