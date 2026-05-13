@@ -35,7 +35,7 @@ if ('' === Phar::running()) {
 //
 // Try resolve some var that need __DIR__
 define('ROOT_PATH', dirname(__DIR__));
-/* define('PROJECT_PATH', realpath(env('PROJECT_PATH', ''))); */
+// define('PROJECT_PATH', realpath(env('PROJECT_PATH', '')));
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
@@ -101,9 +101,11 @@ $artifactDeployment = new ArtifactDeployment(
 /** @var string $entryScript Path to this compiled/entry file (used by SelfUpdater). */
 $entryScript = $_SERVER['SCRIPT_FILENAME'] ?? __FILE__;
 
+$baseDirUpdater = constant('ROOT_PATH') ?? $entryScript;
 $updater = new SelfUpdater(
     (string) ($config->get('self_update_url') ?? ''),
-    dirname($entryScript).'/backups',
+    // dirname($entryScript).'/backups',
+    $baseDirUpdater.'/backups',
     $entryScript
 );
 

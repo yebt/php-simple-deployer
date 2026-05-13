@@ -280,7 +280,7 @@ class HealthAction
     {
         $logs = glob((string) $this->config->get('logs_path').'/deploy_*.log') ?: [];
         $logs = array_filter($logs, function (string $f): bool {
-            return strpos(basename($f), 'deploy_crash_') === false;
+            return false === strpos(basename($f), 'deploy_crash_');
         });
         usort($logs, static function (string $a, string $b): int {
             return (int) filemtime($b) - (int) filemtime($a);
@@ -322,7 +322,7 @@ class HealthAction
         // Prefer the .rlog sibling — it contains a deterministic footer line:
         //   "=== DEPLOYMENT SUCCESS (Xs) ===" or "=== DEPLOYMENT FAILED at: … ==="
         $base = (string) preg_replace('/\.log$/', '', $path);
-        $rlog = $base . '.rlog';
+        $rlog = $base.'.rlog';
 
         $source = file_exists($rlog) ? $rlog : $path;
 
@@ -337,7 +337,7 @@ class HealthAction
 
         // Scan the last ~10 lines for the footer
         $lines = (array) preg_split('/\r\n|\r|\n/', trim($content));
-        $tail  = array_slice($lines, -10);
+        $tail = array_slice($lines, -10);
         foreach (array_reverse($tail) as $line) {
             if (false !== strpos($line, 'DEPLOYMENT SUCCESS')) {
                 return true;
