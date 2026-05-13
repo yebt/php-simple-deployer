@@ -97,7 +97,7 @@ class SelfUpdater
         $timestamp = date('Ymd_His');
         $backupPath = $this->backupDir.'/index.php.bak.'.$timestamp;
         $permissions = fileperms($this->scriptPath);
-        $tmpFile = tempnam(dirname($this->scriptPath), 'index.php.update.');
+        $tmpFile = tempnam(sys_get_temp_dir(), 'sphpd_update_');
 
         if (false === $tmpFile) {
             throw new \RuntimeException('Unable to create a temporary file for the update.');

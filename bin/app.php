@@ -101,11 +101,9 @@ $artifactDeployment = new ArtifactDeployment(
 /** @var string $entryScript Path to this compiled/entry file (used by SelfUpdater). */
 $entryScript = $_SERVER['SCRIPT_FILENAME'] ?? __FILE__;
 
-$baseDirUpdater = constant('ROOT_PATH') ?? $entryScript;
 $updater = new SelfUpdater(
     (string) ($config->get('self_update_url') ?? ''),
-    // dirname($entryScript).'/backups',
-    $baseDirUpdater.'/backups',
+    constant('ROOT_PATH').'/logs/backups',
     $entryScript
 );
 
