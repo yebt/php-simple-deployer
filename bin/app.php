@@ -174,7 +174,7 @@ $router->add('/test-notify', $notify);
 $router->add('/script/update', $selfUpd);
 
 // Debug (skip in production)
-if ('production' !== env('APP_ENV')) {
+if ('production' !== env('APP_ENV', 'production')) {
     $router->add('/debugdeploy', [$deploy, 'debugDeploy']);
 }
 
