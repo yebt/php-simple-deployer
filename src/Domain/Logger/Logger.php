@@ -67,8 +67,8 @@ class Logger
      * Append an output chunk to task_outputs[taskName] inside the status file.
      * Called on every output line so the page can reconstruct state on load.
      *
-     * @param string $taskName  — key inside task_outputs map
-     * @param string $chunk     — raw output chunk (stdout or stderr)
+     * @param string $taskName — key inside task_outputs map
+     * @param string $chunk    — raw output chunk (stdout or stderr)
      */
     public function appendTaskOutput(string $taskName, string $chunk): void
     {
@@ -79,7 +79,7 @@ class Logger
         $outputs = isset($existing['task_outputs']) && is_array($existing['task_outputs'])
             ? $existing['task_outputs']
             : [];
-        $outputs[$taskName] = ($outputs[$taskName] ?? '') . $chunk;
+        $outputs[$taskName] = ($outputs[$taskName] ?? '').$chunk;
         $existing['task_outputs'] = $outputs;
         file_put_contents(
             $this->statusFile,

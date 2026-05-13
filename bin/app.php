@@ -35,7 +35,7 @@ if ('' === Phar::running()) {
 //
 // Try resolve some var that need __DIR__
 define('ROOT_PATH', dirname(__DIR__));
-/* define('PROJECT_PATH', realpath(env('PROJECT_PATH', ''))); */
+// define('PROJECT_PATH', realpath(env('PROJECT_PATH', '')));
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
@@ -103,7 +103,7 @@ $entryScript = $_SERVER['SCRIPT_FILENAME'] ?? __FILE__;
 
 $updater = new SelfUpdater(
     (string) ($config->get('self_update_url') ?? ''),
-    dirname($entryScript).'/backups',
+    constant('ROOT_PATH').'/logs/backups',
     $entryScript
 );
 
