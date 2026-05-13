@@ -61,7 +61,7 @@ class Config
             'webhook_method' => $this->env($env, 'WEBHOOK_METHOD', 'POST'),
             'gitlab_token' => $this->env($env, 'GITLAB_TOKEN', ''),
             'gitlab_base_url' => $this->env($env, 'GITLAB_BASE_URL', 'https://gitlab.com'),
-            'artifact_deploy_dir' => $resolve((string) $this->env($env, 'ARTIFACT_DEPLOY_DIR', 'artifact-deploy')),
+            'artifact_deploy_dir' => $resolve((string) $this->env($env, 'ARTIFACT_DEPLOY_DIR', 'logs/artifact-deploy')),
             'artifact_instructions' => $resolve((string) $this->env($env, 'ARTIFACT_INSTRUCTIONS_FILE', 'artifact-deploy.json')),
             'dashboard_route' => $this->env($env, 'DASHBOARD_ROUTE', 'health'),
             'self_update_url' => $this->env($env, 'SELF_UPDATE_URL', 'https://github.com/yebt/php-simple-deployer/releases/latest/download/index.php'),
