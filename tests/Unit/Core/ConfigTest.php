@@ -18,7 +18,7 @@ test('Config: paths are resolved against baseDir when provided', function () {
 
     expect($config->get('instructions'))->toBe('/srv/app/deploy.json');
     expect($config->get('logs_path'))->toBe('/srv/app/logs');
-    expect($config->get('artifact_deploy_dir'))->toBe('/srv/app/artifact-deploy');
+    expect($config->get('artifact_deploy_dir'))->toBe('/srv/app/logs/artifact-deploy');
 });
 
 test('Config: absolute paths are not modified even with baseDir', function () {
