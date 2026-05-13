@@ -52,6 +52,10 @@ class DeployAction
     {
         $this->security->assertValid();
 
+        $rawInput = (string) file_get_contents('php://input');
+        $logFilePath = $this->logger->getLogsPath().'/req_'.date('Ymd_His').'.log';
+        $this->logger->logRequest($logFilePath, $rawInput, $_SERVER, $_GET, $_POST);
+
         $manual = isset($_GET['manual']) && '1' === $_GET['manual'];
         $method = $this->method();
         $configMethod = strtoupper((string) $this->config->get('webhook_method'));
@@ -79,6 +83,10 @@ class DeployAction
     public function webhookDeployNoWait(): void
     {
         $this->security->assertValid();
+
+        $rawInput = (string) file_get_contents('php://input');
+        $logFilePath = $this->logger->getLogsPath().'/req_'.date('Ymd_His').'.log';
+        $this->logger->logRequest($logFilePath, $rawInput, $_SERVER, $_GET, $_POST);
 
         if ($this->method() !== strtoupper((string) $this->config->get('webhook_method'))) {
             http_response_code(405);
@@ -327,7 +335,7 @@ class DeployAction
         }
 
         $rawInput = (string) file_get_contents('php://input');
-        $logFilePath = $this->logger->getLogsPath().'/webhook_artifact_'.date('Ymd_His').'.log';
+        $logFilePath = $this->logger->getLogsPath().'/req_'.date('Ymd_His').'.log';
         $this->logger->logRequest($logFilePath, $rawInput, $_SERVER, $_GET, $_POST);
 
         return $this->parseArtifactInput($rawInput);

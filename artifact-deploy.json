@@ -1,0 +1,6 @@
+[
+  {
+    "name": "Show extracted files",
+    "run": "ls -la"
+  }
+]

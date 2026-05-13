@@ -133,8 +133,11 @@ class ArtifactDeployment
 
         // ── Prepare deploy directory ──────────────────────────────────────────
         $deployDir = (string) $this->config->get('artifact_deploy_dir');
-        if (!is_dir($deployDir)) {
-            mkdir($deployDir, 0755, true);
+        if (!is_dir($deployDir) && !mkdir($deployDir, 0755, true) && !is_dir($deployDir)) {
+            $msg = "Cannot create artifact deploy directory: {$deployDir}";
+            $logLine($msg, 'error');
+
+            return $this->writeFailure($msg, $logPath, $rlogPath, $htmlPath, $htmlBody, $baseName, $startTime, $host, 'Setup');
         }
 
         // ── Download artifact ─────────────────────────────────────────────────

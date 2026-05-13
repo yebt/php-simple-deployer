@@ -19,6 +19,10 @@ if (!function_exists('env')) {
             return $default;
         }
 
+        if (!array_key_exists($key, $_ENV)) {
+            return $default;
+        }
+
         $value = $_ENV[$key];
 
         if (is_string($value)) {
