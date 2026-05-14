@@ -103,7 +103,7 @@ $config = [
     'dashboard_route' => env('DASHBOARD_ROUTE') ?? 'health',
 ];
 
-const SELF_UPDATE_URL = 'https://raw.githubusercontent.com/yebt/php-simple-deployer/refs/heads/main/index.php';
+const SELF_UPDATE_URL = 'https://github.com/yebt/php-simple-deployer/releases/latest/download/index.php';
 
 const SELF_UPDATE_BACKUP_DIR = __DIR__.'/backups';
 
