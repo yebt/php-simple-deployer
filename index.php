@@ -603,7 +603,7 @@ function checkArtifact(string $method, $config): ArifactContract
 
     // no null some of the vars
     if (! $projectId || ! $job_id) {
-    /* if (! $projectId) { */
+        /* if (! $projectId) { */
         http_response_code(400);
         header('Content-Type: application/json');
         echo json_encode(['error' => 'Missing required fields: project_id']);
@@ -1381,7 +1381,7 @@ function runTasks(
             // Single quotes in trap to prevent variable expansion issues
 
             $wrapped = sprintf(
-                "{\n%s\n}\n__exit__=$?\necho '__STDOUT_EOF__'\"\$__exit__\"\necho '__STDERR_EOF__'\"\$__exit__\" >&2\n",
+                "{\n%s\n}\n__exit__=$?\nprintf '%%s%%s\\n' '__STDOUT_EOF__' \"\$__exit__\"\nprintf '%%s%%s\\n' '__STDERR_EOF__' \"\$__exit__\" >&2\n",
                 $cmd,
             );
 
@@ -1437,11 +1437,8 @@ function runTasks(
                     if ($stream === $pipes[1]) {
                         // Match __STDOUT_EOF__123 format
                         $trimedLine = trim($line);
-                        if (
-                            preg_match('/^__STDOUT_EOF__(.*)$/', $trimedLine, $m)
-                            || str_contains($trimedLine, '__STDOUT_EOF__') // NOTE: Is possible a error if the element contains problems
-                        ) {
-                            $exitCode = (int) $m[1];
+                        if (preg_match('/^__STDOUT_EOF__(\d*)$/', $trimedLine, $m)) {
+                            $exitCode = isset($m[1]) && $m[1] !== '' ? (int) $m[1] : $exitCode;
                             $stdoutDone = true;
                             $fullLogFRaw .= '[STDOUT] '.trim($line)."\n";
                             file_put_contents($logFilePathFRaw, '[STDOUT] '.trim($line)."\n", FILE_APPEND);
