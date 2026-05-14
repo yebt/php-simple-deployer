@@ -3684,6 +3684,10 @@ function renderLiveStatus()
                                 badgeClass = 'bg-rose-500/10 text-rose-500 border-rose-500/20 animate-pulse';
                                 label = 'FAIL';
                                 break;
+                            case 'skipped':
+                                badgeClass = 'bg-amber-500/10 text-amber-500 border-amber-500/20';
+                                label = 'SKIP';
+                                break;
                             case 'running':
                                 badgeClass = 'bg-blue-500/10 text-blue-500 border-blue-500/40 border';
                                 label = 'BUSY';
@@ -3699,7 +3703,7 @@ function renderLiveStatus()
                                 label = 'WAIT';
                         }
 
-                        const textClass = status === 'running' ? 'text-slate-900 dark:text-white font-bold' : (status === 'pending' ? 'text-slate-500' : 'text-slate-700 dark:text-slate-400');
+                        const textClass = status === 'running' ? 'text-slate-900 dark:text-white font-bold' : (status === 'skipped' ? 'text-amber-500/70' : (status === 'pending' ? 'text-slate-500' : 'text-slate-700 dark:text-slate-400'));
                         const toggleId = `task-output-${i}`;
                         const isRunning = status === 'running';
                         const isOpen = openCollapsibles.has(toggleId);
