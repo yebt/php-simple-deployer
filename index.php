@@ -143,11 +143,13 @@ if (isset($argv[1]) && $argv[1] === 'run-deploy') {
 // Execute artifact deployment if called from CLI
 if (isset($argv[1]) && $argv[1] === 'run-artifact-deploy') {
     define('CLI_HOST', $argv[2] ?? 'localhost');
+    $cliContext = isset($argv[3]) ? json_decode(base64_decode($argv[3]), true) ?? [] : [];
     executeArtifactDeployment(
-        $argv[3] ?? null,
-        $argv[5] ?? 'build',
-        $argv[6] ?? null,
-        $argv[4] ?? 'main',
+        $argv[4] ?? null,
+        $argv[6] ?? 'build',
+        $argv[7] ?? null,
+        $argv[5] ?? 'main',
+        $cliContext,
     );
     exit();
 }
@@ -386,6 +388,8 @@ function actionWebhookArtifactDeployNoWait()
     validateSecurity();
 
     $dataArtiact = checkArtifact($method, $config);
+    $context = resolveWebhookContext();
+    $ctxArg = escapeshellarg(base64_encode(json_encode($context)));
 
     $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
     exec(
@@ -395,6 +399,8 @@ function actionWebhookArtifactDeployNoWait()
         .escapeshellarg($host)
         .' '
         .escapeshellarg($dataArtiact->project_id)
+        .' '
+        .$ctxArg
         .' '
         .escapeshellarg($dataArtiact->branch)
         .' '
@@ -1091,7 +1097,7 @@ function executeDeploymentWithSingleShellProccess(array $context = [])
     runTasks($logFilePath, $logFilePathRaw, $logFIlePathHTML, $logFilePathFRaw, $tasks, null, '', '', $context);
 }
 
-function executeArtifactDeployment(?string $projectId, string $job, string $job_id, string $branch = 'main')
+function executeArtifactDeployment(?string $projectId, string $job, string $job_id, string $branch = 'main', array $context = [])
 {
     global $config, $statusFile;
 
@@ -1306,6 +1312,7 @@ function executeArtifactDeployment(?string $projectId, string $job, string $job_
         $extractDir,
         $preLog,
         $preLogRaw,
+        $context,
     );
 }
 
