@@ -4,19 +4,37 @@
     "run": "ls -la"
   },
   {
-    "name": "Install dependencies",
-    "run": [
-      "npm ci --prefer-offline"
-    ]
+    "name": "Frontend: Install dependencies",
+    "when": "[ \"$DEPLOY_TYPE\" = 'frontend' ]",
+    "run": "echo '[frontend] npm ci --prefer-offline (simulated)'"
   },
   {
-    "name": "Build",
-    "run": "npm run build"
+    "name": "Frontend: Build",
+    "when": "[ \"$DEPLOY_TYPE\" = 'frontend' ]",
+    "run": "echo '[frontend] npm run build (simulated)'"
   },
   {
-    "name": "Copy to web root",
-    "run": [
-      "rsync -av --delete dist/ /var/www/html/"
-    ]
+    "name": "Frontend: Copy to web root",
+    "when": "[ \"$DEPLOY_TYPE\" = 'frontend' ]",
+    "run": "echo '[frontend] rsync dist/ /var/www/html/ (simulated)'"
+  },
+  {
+    "name": "Backend: Install dependencies",
+    "when": "[ \"$DEPLOY_TYPE\" = 'backend' ]",
+    "run": "echo '[backend] composer install --no-dev (simulated)'"
+  },
+  {
+    "name": "Backend: Run migrations",
+    "when": "[ \"$DEPLOY_TYPE\" = 'backend' ]",
+    "run": "echo '[backend] php artisan migrate --force (simulated)'"
+  },
+  {
+    "name": "Backend: Restart workers",
+    "when": "[ \"$DEPLOY_TYPE\" = 'backend' ]",
+    "run": "echo '[backend] php artisan queue:restart (simulated)'"
+  },
+  {
+    "name": "Common: Verify deploy",
+    "run": "echo '[common] deploy finished for type: $DEPLOY_TYPE'"
   }
 ]

@@ -143,11 +143,25 @@ if (isset($argv[1]) && $argv[1] === 'run-deploy') {
 // Execute artifact deployment if called from CLI
 if (isset($argv[1]) && $argv[1] === 'run-artifact-deploy') {
     define('CLI_HOST', $argv[2] ?? 'localhost');
+    $cliContext = isset($argv[3]) ? json_decode(base64_decode($argv[3]), true) ?? [] : [];
+    // Optional: --skip-download <fixture-path> as last two args
+    $skipDownload = null;
+    $filteredArgv = [];
+    for ($i = 4; $i < count($argv); $i++) {
+        if ($argv[$i] === '--skip-download' && isset($argv[$i + 1])) {
+            $skipDownload = $argv[$i + 1];
+            $i++;
+        } else {
+            $filteredArgv[] = $argv[$i];
+        }
+    }
     executeArtifactDeployment(
-        $argv[3] ?? null,
-        $argv[5] ?? 'build',
-        $argv[6] ?? null,
-        $argv[4] ?? 'main',
+        $filteredArgv[0] ?? null,
+        $filteredArgv[2] ?? 'build',
+        $filteredArgv[3] ?? null,
+        $filteredArgv[1] ?? 'main',
+        $cliContext,
+        $skipDownload,
     );
     exit();
 }
@@ -386,6 +400,8 @@ function actionWebhookArtifactDeployNoWait()
     validateSecurity();
 
     $dataArtiact = checkArtifact($method, $config);
+    $context = resolveWebhookContext();
+    $ctxArg = escapeshellarg(base64_encode(json_encode($context)));
 
     $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
     exec(
@@ -395,6 +411,8 @@ function actionWebhookArtifactDeployNoWait()
         .escapeshellarg($host)
         .' '
         .escapeshellarg($dataArtiact->project_id)
+        .' '
+        .$ctxArg
         .' '
         .escapeshellarg($dataArtiact->branch)
         .' '
@@ -1091,7 +1109,7 @@ function executeDeploymentWithSingleShellProccess(array $context = [])
     runTasks($logFilePath, $logFilePathRaw, $logFIlePathHTML, $logFilePathFRaw, $tasks, null, '', '', $context);
 }
 
-function executeArtifactDeployment(?string $projectId, string $job, string $job_id, string $branch = 'main')
+function executeArtifactDeployment(?string $projectId, string $job, string $job_id, string $branch = 'main', array $context = [], ?string $skipDownloadFixture = null)
 {
     global $config, $statusFile;
 
@@ -1191,7 +1209,7 @@ function executeArtifactDeployment(?string $projectId, string $job, string $job_
 
     // Validate required config
     $gitlabToken = $config['gitlab_token'];
-    if (empty($gitlabToken)) {
+    if (empty($skipDownloadFixture) && empty($gitlabToken)) {
         $logLine('GITLAB_TOKEN not configured', 'error');
         $failArtifact('GITLAB_TOKEN not configured');
     }
@@ -1209,44 +1227,56 @@ function executeArtifactDeployment(?string $projectId, string $job, string $job_
         mkdir($deployDir, 0755, true);
     }
 
-    // Download artifact from GitLab
+    // Download artifact from GitLab (or use local fixture for testing)
     $artifactFile = $deployDir.'/artifact.zip';
-    $gitlabBase = rtrim($config['gitlab_base_url'], '/');
-    /* $artifactUrl = "{$gitlabBase}/api/v4/projects/{$projectId}/jobs/artifacts/{$branch}/download?job={$job}"; */
-    $artifactUrl = "{$gitlabBase}/api/v4/projects/{$projectId}/jobs/{$job_id}/artifacts";
 
-    $logLine("Downloading artifact — project: $projectId | branch: $branch | job: $job");
-    $logLine("URL: $artifactUrl");
+    if (! empty($skipDownloadFixture)) {
+        if (! file_exists($skipDownloadFixture)) {
+            $msg = "Fixture file not found: $skipDownloadFixture";
+            $logLine($msg, 'error');
+            $failArtifact($msg);
+        }
+        copy($skipDownloadFixture, $artifactFile);
+        $fileSize = round(filesize($artifactFile) / 1024, 1);
+        $logLine("[SKIP-DOWNLOAD] Using fixture: $skipDownloadFixture — {$fileSize} KB");
+    } else {
+        $gitlabBase = rtrim($config['gitlab_base_url'], '/');
+        /* $artifactUrl = "{$gitlabBase}/api/v4/projects/{$projectId}/jobs/artifacts/{$branch}/download?job={$job}"; */
+        $artifactUrl = "{$gitlabBase}/api/v4/projects/{$projectId}/jobs/{$job_id}/artifacts";
 
-    $fp = fopen($artifactFile, 'w');
-    if (! $fp) {
-        $msg = "Cannot write artifact file to: $artifactFile";
-        $logLine($msg, 'error');
-        $failArtifact($msg);
+        $logLine("Downloading artifact — project: $projectId | branch: $branch | job: $job");
+        $logLine("URL: $artifactUrl");
+
+        $fp = fopen($artifactFile, 'w');
+        if (! $fp) {
+            $msg = "Cannot write artifact file to: $artifactFile";
+            $logLine($msg, 'error');
+            $failArtifact($msg);
+        }
+
+        $ch = curl_init($artifactUrl);
+        curl_setopt_array($ch, [
+            CURLOPT_FILE => $fp,
+            CURLOPT_HTTPHEADER => ["PRIVATE-TOKEN: $gitlabToken"],
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_FAILONERROR => true,
+        ]);
+        $result = curl_exec($ch);
+        $curlError = curl_error($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        // DEPRECATED:
+        // curl_close($ch);
+        fclose($fp);
+
+        if ($result === false) {
+            $msg = "Artifact download failed (HTTP $httpCode): $curlError";
+            $logLine($msg, 'error');
+            $failArtifact($msg, 'Download');
+        }
+
+        $fileSize = round(filesize($artifactFile) / 1024, 1);
+        $logLine("Artifact downloaded successfully — {$fileSize} KB (HTTP $httpCode)");
     }
-
-    $ch = curl_init($artifactUrl);
-    curl_setopt_array($ch, [
-        CURLOPT_FILE => $fp,
-        CURLOPT_HTTPHEADER => ["PRIVATE-TOKEN: $gitlabToken"],
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_FAILONERROR => true,
-    ]);
-    $result = curl_exec($ch);
-    $curlError = curl_error($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    // DEPRECATED:
-    // curl_close($ch);
-    fclose($fp);
-
-    if ($result === false) {
-        $msg = "Artifact download failed (HTTP $httpCode): $curlError";
-        $logLine($msg, 'error');
-        $failArtifact($msg, 'Download');
-    }
-
-    $fileSize = round(filesize($artifactFile) / 1024, 1);
-    $logLine("Artifact downloaded successfully — {$fileSize} KB (HTTP $httpCode)");
 
     // Update status: extracting
     file_put_contents($statusFile, json_encode([
@@ -1306,6 +1336,7 @@ function executeArtifactDeployment(?string $projectId, string $job, string $job_
         $extractDir,
         $preLog,
         $preLogRaw,
+        $context,
     );
 }
 
