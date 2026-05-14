@@ -235,6 +235,7 @@ $router->add('/log/last', 'actionLogLast');
 $router->add('/log/lasthtml', 'actionLogLatestHtml');
 $router->add('/log/lastfraw', 'actionLogLastFRaw');
 $router->add('/status/live', 'actionStatusLive');
+$router->add('/status/live2', 'actionStatusLive2');
 $router->add('/deploy/stop', 'actionDeployStop');
 $router->add('/test-notify', 'actionNotifyTest');
 $router->add('/clear-history', 'actionClearHistory');
@@ -465,6 +466,11 @@ function actionLogLatestHtml()
 function actionStatusLive()
 {
     renderLiveStatus();
+}
+
+function actionStatusLive2()
+{
+    renderLiveStatus2();
 }
 
 function actionNotifyTest()
@@ -3614,7 +3620,306 @@ function renderLogsView()
 <?php
 }
 
-function renderLiveStatus()
+function renderLiveStatus2()
+{
+    global $statusFile;
+    $data = file_exists($statusFile)
+        ? json_decode(file_get_contents($statusFile), true)
+        : [];
+    ?>
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Deployment · Live</title>
+    <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+    <?= renderHeadImports() ?>
+    <style type="text/tailwindcss">
+        @theme {
+            --color-gh-bg: #0d1117;
+            --color-gh-surface: #161b22;
+            --color-gh-border: #30363d;
+            --color-gh-muted: #8b949e;
+        }
+    </style>
+</head>
+<body class="bg-[#0d1117] text-[#e6edf3] font-mono min-h-screen">
+
+<div class="flex flex-col h-screen">
+
+    <!-- Top bar -->
+    <header class="flex items-center gap-3 px-6 py-3 border-b border-[#30363d] bg-[#161b22] shrink-0">
+        <a href="<?= dashboardUrl() ?>" class="text-[#8b949e] hover:text-[#e6edf3] transition">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        </a>
+        <div class="flex items-center gap-2 min-w-0">
+            <span id="hd-status-icon" class="shrink-0 w-4 h-4 rounded-full bg-yellow-400 animate-pulse"></span>
+            <span id="hd-task" class="text-sm font-semibold text-[#e6edf3] truncate"><?= htmlspecialchars($data['task'] ?? 'Starting…') ?></span>
+        </div>
+        <div class="ml-auto flex items-center gap-4 shrink-0">
+            <!-- Show skipped toggle -->
+            <label class="flex items-center gap-2 text-xs text-[#8b949e] cursor-pointer select-none">
+                <div class="relative">
+                    <input id="toggle-skipped" type="checkbox" class="sr-only peer">
+                    <div class="w-8 h-4 bg-[#30363d] rounded-full peer-checked:bg-blue-600 transition"></div>
+                    <div class="absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full transition peer-checked:translate-x-4"></div>
+                </div>
+                Show skipped
+            </label>
+            <span id="hd-progress" class="text-xs text-[#8b949e]"><?= ($data['index'] ?? 0) ?>/<?= ($data['total'] ?? 0) ?></span>
+            <button id="stop-btn" onclick="stopDeployment()" class="hidden items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#da3633]/20 hover:bg-[#da3633]/30 border border-[#da3633]/50 text-[#f85149] text-xs font-semibold transition">
+                <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="1"/></svg>
+                Stop
+            </button>
+        </div>
+    </header>
+
+    <!-- Progress bar -->
+    <div class="h-0.5 bg-[#30363d] shrink-0">
+        <div id="progress-bar" class="h-full bg-blue-500 transition-all duration-500" style="width:0%"></div>
+    </div>
+
+    <!-- Main layout -->
+    <div class="flex flex-1 min-h-0">
+
+        <!-- Sidebar: task list -->
+        <aside class="w-72 shrink-0 border-r border-[#30363d] bg-[#161b22] flex flex-col min-h-0">
+            <div class="px-4 py-3 border-b border-[#30363d] flex items-center justify-between">
+                <span class="text-[10px] font-bold uppercase tracking-widest text-[#8b949e]">Jobs</span>
+                <span id="sidebar-counts" class="text-[10px] text-[#8b949e]"></span>
+            </div>
+            <div id="sidebar-tasks" class="flex-1 overflow-y-auto py-2">
+                <!-- filled by JS -->
+            </div>
+        </aside>
+
+        <!-- Main: output -->
+        <main class="flex-1 flex flex-col min-h-0 bg-[#0d1117]">
+            <!-- Selected task header -->
+            <div id="main-header" class="px-6 py-3 border-b border-[#30363d] bg-[#161b22] flex items-center gap-3 shrink-0">
+                <span id="main-status-icon" class="w-4 h-4 rounded-full bg-[#30363d]"></span>
+                <span id="main-task-name" class="text-sm font-semibold text-[#e6edf3]">Select a task</span>
+                <span id="main-task-badge" class="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full border"></span>
+            </div>
+
+            <!-- Output log -->
+            <div class="flex-1 min-h-0 overflow-y-auto">
+                <pre id="output-log" class="p-6 text-xs text-[#8b949e] font-mono whitespace-pre-wrap break-words min-h-full leading-relaxed">(select a task to see its output)</pre>
+            </div>
+
+            <!-- Current live output (only while running) -->
+            <div id="live-output-wrapper" class="border-t border-[#30363d] bg-[#161b22] shrink-0">
+                <div class="px-4 py-2 flex items-center gap-2 border-b border-[#30363d]">
+                    <span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
+                    <span class="text-[10px] uppercase tracking-widest text-[#8b949e] font-bold">Live output</span>
+                </div>
+                <pre id="live-output" class="p-4 text-[10px] text-green-400 font-mono whitespace-pre-wrap break-words max-h-40 overflow-y-auto"></pre>
+            </div>
+
+            <!-- Result banner -->
+            <div id="result-banner" class="hidden shrink-0 px-6 py-4 flex items-center justify-between border-t border-[#30363d]">
+                <span id="result-text" class="text-sm font-bold"></span>
+                <div class="flex gap-3">
+                    <a href="<?= dashboardUrl() ?>" class="px-4 py-1.5 rounded-md border border-[#30363d] text-xs text-[#8b949e] hover:text-[#e6edf3] hover:border-[#8b949e] transition">Dashboard</a>
+                    <a id="result-log-link" href="#" class="px-4 py-1.5 rounded-md border border-[#30363d] text-xs text-[#8b949e] hover:text-[#e6edf3] hover:border-[#8b949e] transition">Full log</a>
+                </div>
+            </div>
+        </main>
+
+    </div>
+</div>
+
+<script>
+const dashboardUrl = '<?= dashboardUrl() ?>';
+
+// ── state ──────────────────────────────────────────────────────────────────
+let selectedTask = null;   // index of task shown in main panel
+let history      = [];
+let showSkipped  = false;
+let finished     = false;
+
+// ── toggle ─────────────────────────────────────────────────────────────────
+document.getElementById('toggle-skipped').addEventListener('change', e => {
+    showSkipped = e.target.checked;
+    renderSidebar();
+});
+
+// ── status icons ───────────────────────────────────────────────────────────
+const statusCfg = {
+    pending:  { dot: 'bg-[#30363d]',           label: 'WAIT', badge: 'text-[#8b949e] border-[#30363d] bg-[#30363d]/20' },
+    running:  { dot: 'bg-yellow-400 animate-pulse', label: 'RUNNING', badge: 'text-yellow-400 border-yellow-400/30 bg-yellow-400/10' },
+    success:  { dot: 'bg-green-500',            label: 'DONE', badge: 'text-green-400 border-green-500/30 bg-green-500/10' },
+    failed:   { dot: 'bg-[#f85149] animate-pulse', label: 'FAIL', badge: 'text-[#f85149] border-[#da3633]/40 bg-[#da3633]/10' },
+    skipped:  { dot: 'bg-amber-400/50',         label: 'SKIP', badge: 'text-amber-400 border-amber-400/30 bg-amber-400/10' },
+};
+
+function cfg(status) { return statusCfg[status] ?? statusCfg.pending; }
+
+// ── sidebar ────────────────────────────────────────────────────────────────
+function renderSidebar() {
+    const container = document.getElementById('sidebar-tasks');
+    container.innerHTML = '';
+
+    const counts = { success: 0, failed: 0, skipped: 0, running: 0, pending: 0 };
+    history.forEach(t => counts[t.status] = (counts[t.status] ?? 0) + 1);
+
+    const parts = [];
+    if (counts.success) parts.push(`<span class="text-green-500">${counts.success} done</span>`);
+    if (counts.failed)  parts.push(`<span class="text-[#f85149]">${counts.failed} failed</span>`);
+    if (counts.skipped) parts.push(`<span class="text-amber-400">${counts.skipped} skipped</span>`);
+    document.getElementById('sidebar-counts').innerHTML = parts.join(' · ');
+
+    history.forEach((task, i) => {
+        if (task.status === 'skipped' && !showSkipped) return;
+
+        const c      = cfg(task.status);
+        const active = selectedTask === i;
+        const row    = document.createElement('button');
+        row.className = `w-full text-left flex items-center gap-3 px-4 py-2.5 transition text-xs
+            ${active ? 'bg-[#1f2937] border-l-2 border-blue-500' : 'border-l-2 border-transparent hover:bg-[#21262d]'}`;
+
+        // spinner for running
+        const icon = task.status === 'running'
+            ? `<svg class="w-3.5 h-3.5 shrink-0 text-yellow-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z"/>
+               </svg>`
+            : `<span class="w-3.5 h-3.5 shrink-0 rounded-full ${c.dot} inline-block"></span>`;
+
+        row.innerHTML = `
+            ${icon}
+            <span class="truncate ${task.status === 'skipped' ? 'text-[#8b949e] italic' : (active ? 'text-[#e6edf3] font-semibold' : 'text-[#c9d1d9]')}">${escHtml(task.name)}</span>
+        `;
+        row.addEventListener('click', () => selectTask(i));
+        container.appendChild(row);
+    });
+}
+
+// ── main panel ─────────────────────────────────────────────────────────────
+function selectTask(i) {
+    selectedTask = i;
+    const task = history[i];
+    if (!task) return;
+
+    const c = cfg(task.status);
+    document.getElementById('main-task-name').textContent = task.name;
+
+    const badge = document.getElementById('main-task-badge');
+    badge.textContent  = c.label;
+    badge.className    = `ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full border ${c.badge}`;
+
+    const icon = document.getElementById('main-status-icon');
+    icon.className = `w-4 h-4 rounded-full ${c.dot}`;
+
+    document.getElementById('output-log').textContent = task.output?.trim() || '(no output)';
+
+    renderSidebar(); // re-render to update active highlight
+}
+
+// ── poll ───────────────────────────────────────────────────────────────────
+async function poll() {
+    try {
+        const res  = await fetch('/status/data');
+        const data = await res.json();
+
+        history = data.history ?? [];
+
+        // header
+        document.getElementById('hd-task').textContent    = data.task ?? '';
+        document.getElementById('hd-progress').textContent = `${data.index ?? 0}/${data.total ?? 0}`;
+
+        // progress bar
+        const pct = (data.total > 0) ? (data.index / data.total) * 100 : 0;
+        document.getElementById('progress-bar').style.width = pct + '%';
+
+        // header status icon
+        const hdIcon = document.getElementById('hd-status-icon');
+        if (data.finished) {
+            hdIcon.className = `shrink-0 w-4 h-4 rounded-full ${data.success ? 'bg-green-500' : 'bg-[#f85149]'}`;
+        } else if (data.running) {
+            hdIcon.className = 'shrink-0 w-4 h-4 rounded-full bg-yellow-400 animate-pulse';
+        }
+
+        // stop button
+        const stopBtn = document.getElementById('stop-btn');
+        data.running ? stopBtn.classList.replace('hidden','flex') : stopBtn.classList.replace('flex','hidden');
+
+        // live output panel
+        const liveWrapper = document.getElementById('live-output-wrapper');
+        const liveOut     = document.getElementById('live-output');
+        if (data.running && data.current_output) {
+            liveWrapper.classList.remove('hidden');
+            liveOut.textContent = data.current_output;
+            liveOut.scrollTop   = liveOut.scrollHeight;
+        } else {
+            liveWrapper.classList.add('hidden');
+        }
+
+        // auto-select running task
+        const runningIdx = history.findIndex(t => t.status === 'running');
+        if (runningIdx !== -1 && selectedTask !== runningIdx) {
+            selectTask(runningIdx);
+        } else if (selectedTask !== null) {
+            // refresh output of currently selected task
+            const task = history[selectedTask];
+            if (task) document.getElementById('output-log').textContent = task.output?.trim() || '(no output)';
+        }
+
+        renderSidebar();
+
+        // result banner
+        if (data.finished && !finished) {
+            finished = true;
+            clearInterval(pollInterval);
+
+            const bar = document.getElementById('progress-bar');
+            bar.classList.remove('bg-blue-500');
+            bar.classList.add(data.success ? 'bg-green-500' : 'bg-[#f85149]');
+            bar.style.width = '100%';
+
+            const banner = document.getElementById('result-banner');
+            banner.classList.remove('hidden');
+            banner.classList.add('flex');
+
+            const txt = document.getElementById('result-text');
+            txt.textContent  = data.success ? '✓ Deployment completed successfully' : '✕ Deployment failed';
+            txt.className    = `text-sm font-bold ${data.success ? 'text-green-400' : 'text-[#f85149]'}`;
+
+            if (data.log_file) {
+                document.getElementById('result-log-link').href = `/log/view?file=${encodeURIComponent(data.log_file)}`;
+            }
+        }
+
+    } catch (e) {
+        console.error('poll error', e);
+    }
+}
+
+async function stopDeployment() {
+    if (!confirm('Stop the current deployment?')) return;
+    try {
+        const res  = await fetch('/deploy/stop', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) poll();
+        else alert('Could not stop: ' + data.message);
+    } catch (e) {
+        alert('Error stopping deployment');
+    }
+}
+
+function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+const pollInterval = setInterval(poll, 1000);
+poll();
+</script>
+</body>
+</html>
+<?php
+}
+
 {
     global $statusFile;
     if (! file_exists($statusFile)) {
