@@ -777,6 +777,92 @@ function convertYmlToJson($ymlPath)
     return $trimmed;
 }
 
+function detectYqAsset(): string
+{
+    $os = strtolower(PHP_OS_FAMILY);
+    $arch = trim(shell_exec('uname -m 2>/dev/null') ?? '');
+
+    $archMap = [
+        'x86_64'  => 'amd64',
+        'aarch64' => 'arm64',
+        'armv7l'  => 'arm',
+        'i686'    => '386',
+        'i386'    => '386',
+    ];
+    $archSlug = $archMap[$arch] ?? 'amd64';
+
+    $osMap = [
+        'linux'   => 'linux',
+        'darwin'  => 'darwin',
+        'windows' => 'windows',
+    ];
+    $osSlug = $osMap[$os] ?? 'linux';
+
+    $ext = $osSlug === 'windows' ? '.exe' : '';
+
+    return "yq_{$osSlug}_{$archSlug}{$ext}";
+}
+
+/**
+ * Downloads the yq binary from the latest GitHub release into $targetPath.
+ * Returns null on success, or an error string on failure.
+ */
+function downloadYqBinary(string $targetPath): ?string
+{
+    $asset = detectYqAsset();
+    $url = "https://github.com/mikefarah/yq/releases/latest/download/{$asset}";
+    $targetDir = dirname($targetPath);
+
+    if (! is_dir($targetDir) && ! mkdir($targetDir, 0755, true)) {
+        return "YQ binary not found and cannot create directory: $targetDir";
+    }
+
+    echo "[INFO] yq binary not found — downloading from $url\n";
+
+    $tmp = $targetDir.'/.yq_download_'.getmypid();
+    $fp = fopen($tmp, 'w');
+    if (! $fp) {
+        return "YQ auto-download failed: cannot write to $tmp";
+    }
+
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_FILE           => $fp,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_TIMEOUT        => 120,
+        CURLOPT_CONNECTTIMEOUT => 15,
+        CURLOPT_USERAGENT      => 'SPHPD yq-autodownload',
+        CURLOPT_FAILONERROR    => true,
+    ]);
+    $ok       = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr  = curl_error($ch);
+    fclose($fp);
+
+    if ($ok === false || $httpCode < 200 || $httpCode >= 300) {
+        unlink($tmp);
+        return "YQ auto-download failed (HTTP $httpCode): $curlErr";
+    }
+
+    if (filesize($tmp) < 1024) {
+        unlink($tmp);
+        return "YQ auto-download produced an unexpectedly small file — check the URL or network.";
+    }
+
+    if (! rename($tmp, $targetPath)) {
+        unlink($tmp);
+        return "YQ auto-download failed: cannot move binary to $targetPath";
+    }
+
+    if (! chmod($targetPath, 0755)) {
+        return "YQ downloaded but chmod +x failed on $targetPath";
+    }
+
+    echo "[INFO] yq downloaded successfully to $targetPath\n";
+
+    return null;
+}
+
 function validateYqlPathForYml()
 {
     global $config;
@@ -792,9 +878,12 @@ function validateYqlPathForYml()
             return 'YQ_PATH environment variable is not set. Required for processing YAML files.';
         }
 
-        // Check if yq binary exists
+        // Check if yq binary exists — attempt auto-download if missing
         if (! file_exists($yqPath)) {
-            return "YQ binary not found at path: $yqPath";
+            $downloadError = downloadYqBinary($yqPath);
+            if ($downloadError) {
+                return $downloadError;
+            }
         }
 
         // Check if it's a regular file
