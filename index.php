@@ -4091,7 +4091,7 @@ function selectTask(i) {
     const icon = document.getElementById('main-status-icon');
     icon.className = `w-4 h-4 rounded-full ${c.dot}`;
 
-    document.getElementById('output-log').textContent = task.output?.trim() || '(no output)';
+    document.getElementById('output-log').textContent = (task.output?.trim() || '(no output)').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
     renderSidebar(); // re-render to update active highlight
 }
@@ -4129,7 +4129,7 @@ async function poll() {
         const liveOut     = document.getElementById('live-output');
         if (data.running && data.current_output) {
             liveWrapper.classList.remove('hidden');
-            liveOut.textContent = data.current_output;
+            liveOut.textContent = data.current_output.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
             liveOut.scrollTop   = liveOut.scrollHeight;
         } else {
             liveWrapper.classList.add('hidden');
