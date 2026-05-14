@@ -3620,6 +3620,239 @@ function renderLogsView()
 <?php
 }
 
+function renderLiveStatus()
+{
+    global $statusFile;
+
+    if (! file_exists($statusFile)) {
+        header('Location: '.dashboardUrl());
+        exit();
+    }
+    $data = json_decode(file_get_contents($statusFile), true);
+    ?>
+    <!DOCTYPE html>
+    <html lang="en">
+
+    <head>
+        <meta charset="UTF-8">
+        <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+        <title>Execution Status</title>
+        <?= renderHeadImports() ?>
+        <script>
+            window.dashboardUrl = '<?= dashboardUrl() ?>';
+
+            async function updateStatus() {
+                try {
+                    const response = await fetch('/status/data');
+                    const data = await response.json();
+
+                    document.getElementById('current-task').textContent = data.task;
+                    document.getElementById('progress-text').textContent = `${data.index}/${data.total}`;
+
+                    const progressPercent = data.running || data.finished ? (data.index / data.total) * 100 : ((data.index - 1) / data.total) * 100;
+                    document.getElementById('progress-bar').style.width = progressPercent + '%';
+
+                    const stopButton = document.getElementById('stop-button');
+                    if (data.running) {
+                        stopButton.classList.remove('hidden');
+                    } else {
+                        stopButton.classList.add('hidden');
+                    }
+
+                    document.querySelectorAll('#history-container > div > div[id^="task-output-"]').forEach(el => {
+                        if (!el.classList.contains('hidden')) {
+                            openCollapsibles.add(el.id);
+                        }
+                    });
+
+                    const historyContainer = document.getElementById('history-container');
+                    historyContainer.innerHTML = '';
+                    data.history.forEach((item, i) => {
+                        const status = item.status;
+                        const name = item.name;
+                        const output = item.output || '';
+
+                        let badgeClass = '';
+                        let label = '';
+                        let rowClass = 'border-transparent';
+                        let bounce = '';
+
+                        switch (status) {
+                            case 'success':
+                                badgeClass = 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20';
+                                label = 'DONE';
+                                break;
+                            case 'failed':
+                                badgeClass = 'bg-rose-500/10 text-rose-500 border-rose-500/20 animate-pulse';
+                                label = 'FAIL';
+                                break;
+                            case 'skipped':
+                                badgeClass = 'bg-amber-500/10 text-amber-500 border-amber-500/20';
+                                label = 'SKIP';
+                                break;
+                            case 'running':
+                                badgeClass = 'bg-blue-500/10 text-blue-500 border-blue-500/40 border';
+                                label = 'BUSY';
+                                rowClass = 'border-blue-500/20 bg-blue-500/5';
+                                bounce = `<div class="flex gap-1">
+                                            <span class="w-1 h-1 bg-blue-500 rounded-full animate-bounce"></span>
+                                            <span class="w-1 h-1 bg-blue-500 rounded-full animate-bounce [animation-delay:0.2s]"></span>
+                                            <span class="w-1 h-1 bg-blue-500 rounded-full animate-bounce [animation-delay:0.4s]"></span>
+                                          </div>`;
+                                break;
+                            default:
+                                badgeClass = 'bg-slate-100 dark:bg-slate-800/50 text-slate-400 border-transparent';
+                                label = 'WAIT';
+                        }
+
+                        const textClass = status === 'running' ? 'text-slate-900 dark:text-white font-bold' : (status === 'skipped' ? 'text-amber-500/70' : (status === 'pending' ? 'text-slate-500' : 'text-slate-700 dark:text-slate-400'));
+                        const toggleId = `task-output-${i}`;
+                        const isRunning = status === 'running';
+                        const isOpen = openCollapsibles.has(toggleId);
+
+                        historyContainer.innerHTML += `
+                            <div class="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
+                                <button onclick="document.getElementById('${toggleId}').classList.toggle('hidden'); this.querySelector('.toggle-arrow').classList.toggle('rotate-180'); if (document.getElementById('${toggleId}').classList.contains('hidden')) { openCollapsibles.delete('${toggleId}'); } else { openCollapsibles.add('${toggleId}'); }" class="w-full flex items-center justify-between p-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
+                                    <div class="flex items-center gap-3">
+                                        <span class="text-[10px] px-2 py-0.5 rounded font-bold border uppercase ${badgeClass}">
+                                            ${label}
+                                        </span>
+                                        <span class="text-xs ${textClass}">
+                                            ${name}
+                                        </span>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        ${bounce}
+                                        <svg class="toggle-arrow w-4 h-4 text-slate-400 transition-transform ${isOpen ? '' : 'rotate-180'}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path>
+                                        </svg>
+                                    </div>
+                                </button>
+                                <div id="${toggleId}" class="${isOpen ? '' : 'hidden'} bg-slate-50 dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-700 p-3">
+                                    <pre class="text-[10px] text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-950 p-3 rounded border border-slate-200 dark:border-slate-800 overflow-x-auto max-h-64 overflow-y-auto font-mono whitespace-pre-wrap break-words">${output || '(no output)'}</pre>
+                                </div>
+                            </div>
+                        `;
+                    });
+
+                    const outputTerminal = document.getElementById('output-terminal');
+                    if (data.current_output) {
+                        outputTerminal.textContent = data.current_output;
+                        outputTerminal.scrollTop = outputTerminal.scrollHeight;
+                    }
+
+                    const statusText = document.getElementById('status-text');
+                    if (data.running) {
+                        statusText.textContent = 'System executing instructions...';
+                    } else {
+                        statusText.textContent = 'Process halted. Check logs.';
+                    }
+
+                    if (data.finished) {
+                        const resultContainer = document.getElementById('result-container');
+                        resultContainer.classList.remove('hidden');
+                        resultContainer.className = `mb-6 p-4 rounded-lg border ${data.success ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500' : 'bg-rose-500/10 border-rose-500/20 text-rose-500'} flex justify-between items-center uppercase text-[10px] font-bold tracking-widest`;
+                        resultContainer.innerHTML = `<span>${data.success ? '✓ Deployment Completed' : '✕ Deployment Failed'}</span><span>Duration: ${data.duration}s</span>`;
+
+                        document.getElementById('action-buttons').innerHTML = `
+                            <a href="${window.dashboardUrl}" class="bg-slate-800 text-white px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-700 transition">BACK TO DASHBOARD</a>
+                            <a href="/log/view?file=${encodeURIComponent(data.log_file)}" class="border border-slate-200 dark:border-slate-800 px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition">VIEW FULL LOG</a>
+                        `;
+
+                        clearInterval(pollInterval);
+                    }
+
+                } catch (error) {
+                    console.error('Error fetching status:', error);
+                }
+            }
+
+            async function stopDeployment() {
+                if (!confirm('Are you sure you want to stop the deployment?')) {
+                    return;
+                }
+
+                try {
+                    const response = await fetch('/deploy/stop', {
+                        method: 'POST'
+                    });
+                    const data = await response.json();
+
+                    if (data.success) {
+                        alert('Deployment stopped successfully');
+                        updateStatus();
+                    } else {
+                        alert('Failed to stop deployment: ' + data.message);
+                    }
+                } catch (error) {
+                    console.error('Error stopping deployment:', error);
+                    alert('Error stopping deployment');
+                }
+            }
+
+            const openCollapsibles = new Set();
+            const pollInterval = setInterval(updateStatus, 1000);
+            window.onload = updateStatus;
+        </script>
+    </head>
+
+    <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-400 min-h-screen font-mono p-6 transition-colors duration-200">
+        <div class="w-full max-w-6xl mx-auto">
+
+            <div class="mb-8 flex justify-between items-end border-b border-slate-200 dark:border-slate-700 pb-6">
+                <div>
+                    <div class="text-[10px] text-slate-400 dark:text-slate-500 mb-1 uppercase tracking-[0.2em]">Current Progress</div>
+                    <div id="current-task" class="text-2xl text-slate-900 dark:text-white font-bold tracking-tight">
+                        <?= $data['task'] ?>
+                    </div>
+                </div>
+                <div class="text-right">
+                    <span id="progress-text" class="text-3xl font-black text-slate-300 dark:text-slate-700"><?= $data['index'] ?>/<?= $data['total'] ?></span>
+                </div>
+            </div>
+
+            <div class="relative mb-6">
+                <div class="overflow-hidden h-2 text-xs flex rounded bg-slate-200 dark:bg-slate-800">
+                    <div id="progress-bar" style="width:<?= (($data['index'] - 1) / $data['total']) * 100 ?>%" class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-blue-600 transition-all duration-500"></div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-6 mb-8">
+                <div class="flex flex-col">
+                    <div class="text-[10px] text-slate-400 dark:text-slate-500 mb-3 uppercase tracking-[0.2em] font-bold">Task Execution Timeline</div>
+                    <div id="history-container" class="space-y-2 overflow-y-auto max-h-96 pr-2"></div>
+                </div>
+                <div class="flex flex-col">
+                    <div class="text-[10px] text-slate-400 dark:text-slate-500 mb-3 uppercase tracking-[0.2em] font-bold">Real-time Output</div>
+                    <pre id="output-terminal" class="flex-1 overflow-y-auto p-4 bg-slate-900 text-slate-300 text-[10px] rounded-lg border border-slate-800 font-mono whitespace-pre-wrap break-words max-h-96"></pre>
+                </div>
+            </div>
+
+            <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <p id="status-text" class="text-[9px] text-slate-400 dark:text-slate-600 uppercase tracking-widest italic">
+                        System executing instructions...
+                    </p>
+                    <a href="<?= dashboardUrl() ?>" class="text-[10px] text-blue-500 hover:underline">Exit Live View</a>
+                </div>
+
+                <div id="result-container" class="hidden mb-4"></div>
+
+                <div id="action-buttons" class="flex justify-between items-center border-t border-slate-200 dark:border-slate-700 pt-4">
+                    <p class="text-[9px] text-slate-400 italic animate-pulse tracking-widest">SYNCING WITH SERVER...</p>
+                    <button id="stop-button" onclick="stopDeployment()" class="hidden bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded text-[10px] font-bold transition">
+                        ⏹ STOP DEPLOYMENT
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </body>
+
+    </html>
+<?php
+}
+
 function renderLiveStatus2()
 {
     global $statusFile;
@@ -3917,257 +4150,5 @@ poll();
 </script>
 </body>
 </html>
-<?php
-}
-
-{
-    global $statusFile;
-    if (! file_exists($statusFile)) {
-        header('Location: '.dashboardUrl());
-        exit();
-    }
-    $data = json_decode(file_get_contents($statusFile), true);
-    ?>
-    <!DOCTYPE html>
-    <html lang="en">
-
-    <head>
-        <meta charset="UTF-8">
-        <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
-        <title>Execution Status</title>
-        <?= renderHeadImports() ?>
-        <script>
-            window.dashboardUrl = '<?= dashboardUrl() ?>';
-
-            async function updateStatus() {
-                try {
-                    const response = await fetch('/status/data');
-                    const data = await response.json();
-
-                    // Update task name and progress
-                    document.getElementById('current-task').textContent = data.task;
-                    document.getElementById('progress-text').textContent = `${data.index}/${data.total}`;
-
-                    // Update progress bar
-                    const progressPercent = data.running || data.finished ? (data.index / data.total) * 100 : ((data.index - 1) / data.total) * 100;
-                    document.getElementById('progress-bar').style.width = progressPercent + '%';
-
-                    // Update stop button visibility
-                    const stopButton = document.getElementById('stop-button');
-                    if (data.running) {
-                        stopButton.classList.remove('hidden');
-                    } else {
-                        stopButton.classList.add('hidden');
-                    }
-
-                    // Update history with expandable outputs
-                    // Save current state of open collapsibles
-                    document.querySelectorAll('#history-container > div > div[id^="task-output-"]').forEach(el => {
-                        if (!el.classList.contains('hidden')) {
-                            openCollapsibles.add(el.id);
-                        }
-                    });
-
-                    const historyContainer = document.getElementById('history-container');
-                    historyContainer.innerHTML = '';
-                    data.history.forEach((item, i) => {
-                        const status = item.status;
-                        const name = item.name;
-                        const output = item.output || '';
-
-                        let badgeClass = '';
-                        let label = '';
-                        let rowClass = 'border-transparent';
-                        let bounce = '';
-
-                        switch (status) {
-                            case 'success':
-                                badgeClass = 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20';
-                                label = 'DONE';
-                                break;
-                            case 'failed':
-                                badgeClass = 'bg-rose-500/10 text-rose-500 border-rose-500/20 animate-pulse';
-                                label = 'FAIL';
-                                break;
-                            case 'skipped':
-                                badgeClass = 'bg-amber-500/10 text-amber-500 border-amber-500/20';
-                                label = 'SKIP';
-                                break;
-                            case 'running':
-                                badgeClass = 'bg-blue-500/10 text-blue-500 border-blue-500/40 border';
-                                label = 'BUSY';
-                                rowClass = 'border-blue-500/20 bg-blue-500/5';
-                                bounce = `<div class="flex gap-1">
-                                            <span class="w-1 h-1 bg-blue-500 rounded-full animate-bounce"></span>
-                                            <span class="w-1 h-1 bg-blue-500 rounded-full animate-bounce [animation-delay:0.2s]"></span>
-                                            <span class="w-1 h-1 bg-blue-500 rounded-full animate-bounce [animation-delay:0.4s]"></span>
-                                          </div>`;
-                                break;
-                            default:
-                                badgeClass = 'bg-slate-100 dark:bg-slate-800/50 text-slate-400 border-transparent';
-                                label = 'WAIT';
-                        }
-
-                        const textClass = status === 'running' ? 'text-slate-900 dark:text-white font-bold' : (status === 'skipped' ? 'text-amber-500/70' : (status === 'pending' ? 'text-slate-500' : 'text-slate-700 dark:text-slate-400'));
-                        const toggleId = `task-output-${i}`;
-                        const isRunning = status === 'running';
-                        const isOpen = openCollapsibles.has(toggleId);
-
-                        historyContainer.innerHTML += `
-                            <div class="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
-                                <button onclick="document.getElementById('${toggleId}').classList.toggle('hidden'); this.querySelector('.toggle-arrow').classList.toggle('rotate-180'); if (document.getElementById('${toggleId}').classList.contains('hidden')) { openCollapsibles.delete('${toggleId}'); } else { openCollapsibles.add('${toggleId}'); }" class="w-full flex items-center justify-between p-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
-                                    <div class="flex items-center gap-3">
-                                        <span class="text-[10px] px-2 py-0.5 rounded font-bold border uppercase ${badgeClass}">
-                                            ${label}
-                                        </span>
-                                        <span class="text-xs ${textClass}">
-                                            ${name}
-                                        </span>
-                                    </div>
-                                    <div class="flex items-center gap-2">
-                                        ${bounce}
-                                        <svg class="toggle-arrow w-4 h-4 text-slate-400 transition-transform ${isOpen ? '' : 'rotate-180'}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path>
-                                        </svg>
-                                    </div>
-                                </button>
-                                <div id="${toggleId}" class="${isOpen ? '' : 'hidden'} bg-slate-50 dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-700 p-3">
-                                    <pre class="text-[10px] text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-950 p-3 rounded border border-slate-200 dark:border-slate-800 overflow-x-auto max-h-64 overflow-y-auto font-mono whitespace-pre-wrap break-words">${output || '(no output)'}</pre>
-                                </div>
-                            </div>
-                        `;
-                    });
-
-                    // Update output terminal
-                    const outputTerminal = document.getElementById('output-terminal');
-                    if (data.current_output) {
-                        outputTerminal.textContent = data.current_output;
-                        outputTerminal.scrollTop = outputTerminal.scrollHeight;
-                    }
-
-                    // Update footer and status messages
-                    const statusText = document.getElementById('status-text');
-                    if (data.running) {
-                        statusText.textContent = 'System executing instructions...';
-                    } else {
-                        statusText.textContent = 'Process halted. Check logs.';
-                    }
-
-                    if (data.finished) {
-                        const resultContainer = document.getElementById('result-container');
-                        resultContainer.classList.remove('hidden');
-                        resultContainer.className = `mb-6 p-4 rounded-lg border ${data.success ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500' : 'bg-rose-500/10 border-rose-500/20 text-rose-500'} flex justify-between items-center uppercase text-[10px] font-bold tracking-widest`;
-                        resultContainer.innerHTML = `<span>${data.success ? '✓ Deployment Completed' : '✕ Deployment Failed'}</span><span>Duration: ${data.duration}s</span>`;
-
-                        document.getElementById('action-buttons').innerHTML = `
-                            <a href="${window.dashboardUrl}" class="bg-slate-800 text-white px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-700 transition">BACK TO DASHBOARD</a>
-                            <a href="/log/view?file=${encodeURIComponent(data.log_file)}" class="border border-slate-200 dark:border-slate-800 px-4 py-2 rounded text-[10px] font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition">VIEW FULL LOG</a>
-                        `;
-
-                        // Stop polling if finished
-                        clearInterval(pollInterval);
-                    }
-
-                } catch (error) {
-                    console.error('Error fetching status:', error);
-                }
-            }
-
-            async function stopDeployment() {
-                if (!confirm('Are you sure you want to stop the deployment?')) {
-                    return;
-                }
-
-                try {
-                    const response = await fetch('/deploy/stop', {
-                        method: 'POST'
-                    });
-                    const data = await response.json();
-
-                    if (data.success) {
-                        alert('Deployment stopped successfully');
-                        updateStatus();
-                    } else {
-                        alert('Failed to stop deployment: ' + data.message);
-                    }
-                } catch (error) {
-                    console.error('Error stopping deployment:', error);
-                    alert('Error stopping deployment');
-                }
-            }
-
-            // Track which collapsibles are open
-            const openCollapsibles = new Set();
-
-            const pollInterval = setInterval(updateStatus, 1000);
-            window.onload = updateStatus;
-        </script>
-    </head>
-
-    <body class="bg-[#f8fafc] dark:bg-[#0b0f1a] text-slate-600 dark:text-slate-400 min-h-screen font-mono p-6 transition-colors duration-200">
-        <div class="w-full max-w-6xl mx-auto">
-
-            <!-- Header Section -->
-            <div class="mb-8 flex justify-between items-end border-b border-slate-200 dark:border-slate-700 pb-6">
-                <div>
-                    <div class="text-[10px] text-slate-400 dark:text-slate-500 mb-1 uppercase tracking-[0.2em]">Current Progress</div>
-                    <div id="current-task" class="text-2xl text-slate-900 dark:text-white font-bold tracking-tight">
-                        <?= $data['task'] ?>
-                    </div>
-                </div>
-                <div class="text-right">
-                    <span id="progress-text" class="text-3xl font-black text-slate-300 dark:text-slate-700"><?= $data['index'] ?>/<?= $data['total'] ?></span>
-                </div>
-            </div>
-
-            <!-- Progress Bar -->
-            <div class="relative mb-6">
-                <div class="overflow-hidden h-2 text-xs flex rounded bg-slate-200 dark:bg-slate-800">
-                    <div id="progress-bar" style="width:<?= (($data['index'] - 1) / $data['total']) * 100 ?>%" class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-blue-600 transition-all duration-500"></div>
-                </div>
-            </div>
-
-            <!-- Two-Column Layout: Task List + Real-time Output -->
-            <div class="grid grid-cols-2 gap-6 mb-8">
-
-                <!-- Left Column: Task List with Expandable Outputs -->
-                <div class="flex flex-col">
-                    <div class="text-[10px] text-slate-400 dark:text-slate-500 mb-3 uppercase tracking-[0.2em] font-bold">Task Execution Timeline</div>
-                    <div id="history-container" class="space-y-2 overflow-y-auto max-h-96 pr-2">
-                        <!-- History items will be inserted here by JS -->
-                    </div>
-                </div>
-
-                <!-- Right Column: Real-time Output Terminal -->
-                <div class="flex flex-col">
-                    <div class="text-[10px] text-slate-400 dark:text-slate-500 mb-3 uppercase tracking-[0.2em] font-bold">Real-time Output</div>
-                    <pre id="output-terminal" class="flex-1 overflow-y-auto p-4 bg-slate-900 text-slate-300 text-[10px] rounded-lg border border-slate-800 font-mono whitespace-pre-wrap break-words max-h-96"></pre>
-                </div>
-
-            </div>
-
-            <!-- Status and Action Section -->
-            <div class="bg-white dark:bg-[#161b2a] border border-slate-200 dark:border-slate-800 rounded-lg p-6">
-                <div class="flex justify-between items-center mb-4">
-                    <p id="status-text" class="text-[9px] text-slate-400 dark:text-slate-600 uppercase tracking-widest italic">
-                        System executing instructions...
-                    </p>
-                    <a href="<?= dashboardUrl() ?>" class="text-[10px] text-blue-500 hover:underline">Exit Live View</a>
-                </div>
-
-                <div id="result-container" class="hidden mb-4"></div>
-
-                <div id="action-buttons" class="flex justify-between items-center border-t border-slate-200 dark:border-slate-700 pt-4">
-                    <p class="text-[9px] text-slate-400 italic animate-pulse tracking-widest">SYNCING WITH SERVER...</p>
-                    <button id="stop-button" onclick="stopDeployment()" class="hidden bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded text-[10px] font-bold transition">
-                        ⏹ STOP DEPLOYMENT
-                    </button>
-                </div>
-            </div>
-
-        </div>
-    </body>
-
-    </html>
 <?php
 }
