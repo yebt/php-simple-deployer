@@ -2486,6 +2486,10 @@ function renderHealth2View()
                                     <span class="w-2 h-2 bg-white rounded-full animate-ping"></span>
                                     View Process
                                 </a>
+                                <a href="/status/live2" class="flex items-center justify-center gap-2 w-full bg-violet-600 hover:bg-violet-700 dark:bg-violet-600 dark:hover:bg-violet-500 text-white py-2.5 rounded text-xs font-bold uppercase tracking-wider transition animate-pulse">
+                                    <span class="w-2 h-2 bg-white rounded-full animate-ping"></span>
+                                    Live2 View
+                                </a>
                             <?php else: ?>
                                 <a href="/webhook/deploy?manual=1" onclick="return confirm('Start deployment?')" class="block w-full text-center bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 py-2.5 rounded text-xs font-bold uppercase tracking-wider hover:opacity-90 transition">
                                     Deploy
@@ -2502,6 +2506,9 @@ function renderHealth2View()
                                 <?php if (isset($statusData['finished'])): ?>
                                     <a href="/status/live" class="flex items-center justify-center w-full py-2 rounded text-[11px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 transition">
                                         Last Result
+                                    </a>
+                                    <a href="/status/live2" class="flex items-center justify-center w-full py-2 rounded text-[11px] font-bold uppercase tracking-wider text-violet-700 dark:text-violet-400 border border-violet-200 dark:border-violet-500/30 hover:bg-violet-50 dark:hover:bg-violet-500/10 transition">
+                                        Last Result (Live2)
                                     </a>
                                 <?php endif; ?>
 
@@ -3006,10 +3013,14 @@ function renderHealth1View()
                         <h2 class="text-slate-900 dark:text-white text-sm font-bold mb-4 uppercase tracking-[0.2em]">Quick actions</h2>
                         <div class="space-y-2">
                             <?php if ($isActuallyRunning): ?>
-                                <a href="/status/live" class="flex items-center justify-center gap-2 w-full bg-blue-600 text-white py-3 rounded text-xs font-bold uppercase tracking-[0.18em] shadow-lg shadow-blue-500/20 animate-pulse">
-                                    <span class="inline-block w-2 h-2 bg-white rounded-full"></span>
-                                    Process running
-                                </a>
+                                    <a href="/status/live" class="flex items-center justify-center gap-2 w-full bg-blue-600 text-white py-3 rounded text-xs font-bold uppercase tracking-[0.18em] shadow-lg shadow-blue-500/20 animate-pulse">
+                                        <span class="inline-block w-2 h-2 bg-white rounded-full"></span>
+                                        Process running
+                                    </a>
+                                    <a href="/status/live2" class="flex items-center justify-center gap-2 w-full bg-violet-600 text-white py-3 rounded text-xs font-bold uppercase tracking-[0.18em] shadow-lg shadow-violet-500/20 animate-pulse">
+                                        <span class="inline-block w-2 h-2 bg-white rounded-full"></span>
+                                        Live2 View
+                                    </a>
                             <?php else: ?>
                                 <a href="/webhook/deploy?manual=1"
                                     onclick="return confirm('Start deployment?')"
@@ -3026,6 +3037,10 @@ function renderHealth1View()
                             <?php if (isset($statusData['finished'])): ?>
                                 <a href="/status/live" class="block w-full text-center border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 py-3 rounded text-[11px] font-bold hover:bg-emerald-500/5 transition uppercase tracking-[0.18em]">
                                     View last result
+                                </a>
+                                <a href="/status/live2" class="block w-full text-center border border-violet-500/30 text-violet-600 dark:text-violet-400 py-3 rounded text-[11px] font-bold hover:bg-violet-500/5 transition uppercase tracking-[0.18em]">
+                                    View last result (Live2)
+                                </a>
                                 </a>
                             <?php endif; ?>
 
