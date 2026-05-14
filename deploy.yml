@@ -1,29 +1,46 @@
 - name: "Always runs"
-  run: "echo '[always] no when condition — always executes'"
+  run:
+    - "echo '[always] no when condition — always executes'"
+    - "sleep 2"
 
 - name: "Only for frontend repo"
   when: '[ "$DEPLOY_REPO" = "frontend" ]'
-  run: "echo '[frontend] deploying frontend app'"
+  run:
+    - "echo '[frontend] deploying frontend app'"
+    - "sleep 3"
 
 - name: "Only for backend repo"
   when: '[ "$DEPLOY_REPO" = "backend" ]'
-  run: "echo '[backend] deploying backend app'"
+  run:
+    - "echo '[backend] deploying backend app'"
+    - "sleep 3"
 
 - name: "Frontend + main branch only"
   when: '[ "$DEPLOY_REPO" = "frontend" ] && [ "$DEPLOY_BRANCH" = "main" ]'
-  run: "echo '[frontend+main] production build triggered'"
+  run:
+    - "echo '[frontend+main] production build triggered'"
+    - "sleep 4"
 
 - name: "Frontend + staging branch"
   when: '[ "$DEPLOY_REPO" = "frontend" ] && [ "$DEPLOY_BRANCH" = "staging" ]'
-  run: "echo '[frontend+staging] staging build triggered'"
+  run:
+    - "echo '[frontend+staging] staging build triggered'"
+    - "sleep 4"
 
 - name: "Any repo on main branch"
   when: '[ "$DEPLOY_BRANCH" = "main" ]'
-  run: "echo '[main] branch is main — running post-deploy tasks'"
+  run:
+    - "echo '[main] branch is main — running post-deploy tasks'"
+    - "sleep 2"
 
 - name: "Env var not set (no context sent)"
   when: '[ -z "$DEPLOY_REPO" ]'
-  run: "echo '[no-context] DEPLOY_REPO was not provided in the webhook'"
+  run:
+    - "echo '[no-context] DEPLOY_REPO was not provided in the webhook'"
+    - "sleep 2"
 
 - name: "List files (always)"
-  run: "ls"
+  run:
+    - "echo '[done] listing project files'"
+    - "ls"
+    - "sleep 1"
