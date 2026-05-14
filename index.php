@@ -135,7 +135,8 @@ $statusFile = $config['logs_path'].'/.current_status';
 // Execute the deployment if called from CLI with the specific argument
 if (isset($argv[1]) && $argv[1] === 'run-deploy') {
     define('CLI_HOST', $argv[2] ?? 'localhost');
-    executeDeploymentWithSingleShellProccess();
+    $cliContext = isset($argv[3]) ? json_decode(base64_decode($argv[3]), true) : [];
+    executeDeploymentWithSingleShellProccess(is_array($cliContext) ? $cliContext : []);
     exit();
 }
 
@@ -310,6 +311,8 @@ function actionWebhookDeploy()
         exit('Method Not Allowed');
     }
 
+    $context = resolveWebhookContext();
+
     if (isset($_GET['manual']) && $_GET['manual'] == '1') {
         // Validate configuration before executing
         $validationError = validateDeploymentConfig();
@@ -318,23 +321,22 @@ function actionWebhookDeploy()
             exit();
         }
 
-        // Ejecutamos el script de despliegue en segundo plano
-        // exec('php '.__FILE__.' run-deploy > /dev/null 2>&1 &');
-
         $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
-        exec('php '.__FILE__.' run-deploy '.escapeshellarg($host).' > /dev/null 2>&1 &');
+        $ctxArg = escapeshellarg(base64_encode(json_encode($context)));
+        exec('php '.__FILE__.' run-deploy '.escapeshellarg($host).' '.$ctxArg.' > /dev/null 2>&1 &');
         // wait lock file
         usleep(500000);
         header('Location: '.dashboardUrl());
         exit();
     }
 
-    executeDeploymentWithSingleShellProccess();
+    executeDeploymentWithSingleShellProccess($context);
 }
 
 function actionDebugDeploy()
 {
-    executeDeploymentWithSingleShellProccess();
+    $context = resolveWebhookContext();
+    executeDeploymentWithSingleShellProccess($context);
 }
 
 function actionWebhookDeployNoWait()
@@ -346,8 +348,10 @@ function actionWebhookDeployNoWait()
         exit('Method Not Allowed');
     }
 
+    $context = resolveWebhookContext();
     $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
-    exec('php '.__FILE__.' run-deploy '.escapeshellarg($host).' > /dev/null 2>&1 &');
+    $ctxArg = escapeshellarg(base64_encode(json_encode($context)));
+    exec('php '.__FILE__.' run-deploy '.escapeshellarg($host).' '.$ctxArg.' > /dev/null 2>&1 &');
 
     // set header json
     http_response_code(202);
@@ -667,6 +671,27 @@ function logRequestToFile($logFilePath, $rawBody)
     );
 }
 
+function resolveWebhookContext(): array
+{
+    // Query params as base
+    $context = $_GET ?? [];
+
+    // Remove internal params that are not user context
+    unset($context['manual'], $context['token']);
+
+    // Body JSON overrides / merges on top (body takes precedence)
+    $rawInput = file_get_contents('php://input');
+    if (! empty($rawInput)) {
+        $body = json_decode($rawInput, true);
+        if (is_array($body)) {
+            $context = array_merge($context, $body);
+        }
+    }
+
+    // Keep only scalar values — no nested objects as env vars
+    return array_filter($context, fn ($v) => is_scalar($v));
+}
+
 function validateSecurity()
 {
     global $config;
@@ -711,6 +736,12 @@ function validateInstructions($tasks)
             $name = $task['name'] ?? 'Task #'.($index + 1);
 
             return "Task '{$name}' 'run' must be a string or an array.";
+        }
+
+        if (isset($task['when']) && ! is_string($task['when'])) {
+            $name = $task['name'] ?? 'Task #'.($index + 1);
+
+            return "Task '{$name}' 'when' must be a string (bash expression).";
         }
     }
 
@@ -902,7 +933,7 @@ function validateJsonContent()
     return null;
 }
 
-function executeDeploymentWithSingleShellProccess()
+function executeDeploymentWithSingleShellProccess(array $context = [])
 {
     global $config, $statusFile;
 
@@ -962,7 +993,7 @@ function executeDeploymentWithSingleShellProccess()
     $jsonContent = getInstructionsContent();
     $tasks = json_decode($jsonContent, true);
 
-    runTasks($logFilePath, $logFilePathRaw, $logFIlePathHTML, $logFilePathFRaw, $tasks);
+    runTasks($logFilePath, $logFilePathRaw, $logFIlePathHTML, $logFilePathFRaw, $tasks, null, '', '', $context);
 }
 
 function executeArtifactDeployment(?string $projectId, string $job, string $job_id, string $branch = 'main')
@@ -1265,6 +1296,7 @@ function runTasks(
     ?string $cwd = null,
     string $logPrefix = '',
     string $logRawPrefix = '',
+    array $context = [],
 ) {
     global $statusFile, $config;
 
@@ -1309,18 +1341,30 @@ function runTasks(
     $statusData['history'] = $taskStatus;
     updateLiveStatus($statusData);
 
+    // Build DEPLOY_* env vars from context (body JSON + query params)
+    $deployEnv = [];
+    foreach ($context as $key => $value) {
+        $envKey = 'DEPLOY_'.strtoupper(preg_replace('/[^a-zA-Z0-9_]/', '_', $key));
+        $deployEnv[$envKey] = (string) $value;
+    }
+
     // Start the execution of tasks
     $descriptor = [
         0 => ['pipe', 'r'], // stdin
         1 => ['pipe', 'w'], // stdout
         2 => ['pipe', 'w'], // stderr
     ];
-    // start process shell
+    // start process shell — inherit current env and overlay DEPLOY_* vars
+    $processEnv = array_merge(
+        array_filter(getenv(), fn ($v) => is_string($v)),
+        $deployEnv,
+    );
     $process = proc_open(
         'stdbuf -o0 -e0 bash',
         $descriptor,
         $pipes,
         realpath($cmdsCWD),
+        $processEnv,
     );
 
     if (! is_resource($process)) {
@@ -1340,10 +1384,32 @@ function runTasks(
         $stdout = '';
         $stderr = '';
 
+        $taskToRunName = $task['name'] ?? 'Task #'.($indx + 1);
+
+        // Evaluate 'when' condition using the DEPLOY_* env vars already in the bash process
+        if (! empty($task['when']) && is_string($task['when'])) {
+            $whenResult = null;
+            $whenEnv = implode(' ', array_map(
+                fn ($k, $v) => $k.'='.escapeshellarg($v),
+                array_keys($deployEnv),
+                $deployEnv,
+            ));
+            $whenCmd = 'env '.$whenEnv.' bash -c '.escapeshellarg($task['when']).' > /dev/null 2>&1';
+            exec($whenCmd, $whenOut, $whenExit);
+            if ($whenExit !== 0) {
+                $taskStatus[$indx]['status'] = 'skipped';
+                $fullLog .= "\n+---------------------------------------------+\n[TASK]: $taskToRunName [SKIPPED: when condition not met]\n";
+                $fullLogFRaw .= "\n+---------------------------------------------+\n[TASK]: $taskToRunName [SKIPPED]\n";
+                file_put_contents($logFilePathFRaw, "\n+---------------------------------------------+\n[TASK]: $taskToRunName [SKIPPED]\n", FILE_APPEND);
+                $statusData['history'] = $taskStatus;
+                updateLiveStatus($statusData);
+                continue;
+            }
+        }
+
         // update in task to running state
         $taskStatus[$indx]['status'] = 'running';
         $taskToRunCommands = $task['run'];
-        $taskToRunName = $task['name'] ?? 'Task #'.($indx + 1);
         $commandsToRun = is_array($taskToRunCommands) ? $taskToRunCommands : [$taskToRunCommands];
 
         // Update staus file for live view
