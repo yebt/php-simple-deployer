@@ -1447,6 +1447,7 @@ function runTasks(
     // initialize the flags
     $success = true;
     $failedTask = '';
+    $errorOutput = '';
     // Prepend any pre-run log content (e.g. from artifact download/extract phase)
     $fullLog = $logPrefix.'START: '.date('Y-m-d H:i:s')."\n";
     $fullLogRaw = $logRawPrefix.'START: '.date('Y-m-d H:i:s')."\n";
@@ -1557,7 +1558,6 @@ function runTasks(
         file_put_contents($logFilePathFRaw, "[TASK]: $taskToRunName\n", FILE_APPEND);
 
         $taskSuccess = true;
-        $errorOutput = '';
 
         foreach ($commandsToRun as $cmd) {
             $fullLog .= "\n[CMD]: $cmd\n";
@@ -1740,10 +1740,10 @@ function runTasks(
     sendTelegram(
         buildReport(
             $host,
-            $taskSuccess,
+            $success,
             $duration,
             $logUrl,
-            $taskToRunName,
+            $failedTask,
             $errorOutput,
         ),
     );
